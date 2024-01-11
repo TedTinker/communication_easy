@@ -55,10 +55,6 @@ def get_rewards(tasks, action):
     return(rewards, wins)
     
     
-    
-
-
-
 
 class Forward(nn.Module): 
     
@@ -78,7 +74,7 @@ class Forward(nn.Module):
         self.apply(init_weights)
         self.to(args.device)
     
-    def forward(self, prev_action, objects, comm, forward_hidden):
+    def forward(self, prev_action, objects, comm):
         obs = self.obs_in(objects, comm)
         hidden = self.between(obs)
         pred_objects, pred_comm = self.predict_obs(hidden)
@@ -94,8 +90,7 @@ print()
 print(torch_summary(forward, 
                     ((1, args.action_shape),
                      (1, args.objects, args.shapes + args.colors), 
-                     (1, args.max_comm_len, args.communication_shape),
-                     (1, 1))))
+                     (1, args.max_comm_len, args.communication_shape))))
 
 
 
@@ -195,7 +190,7 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train forward
     tasks, goals, real_objects, real_comm, recommended_actions = batch_of_tasks(batch_size)
-    pred_objects, pred_comm, forward_hidden = forward(None, real_objects, real_comm, None)
+    pred_objects, pred_comm, forward_hidden = forward(None, real_objects, real_comm)
     pred_objects = pred_objects.squeeze(1)
     pred_comm = pred_comm.squeeze(1)
     object_loss = F.binary_cross_entropy(pred_objects, real_objects)
@@ -207,7 +202,7 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train critic
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
-    _, _, forward_hidden = forward(None, objects, comm, None)
+    _, _, forward_hidden = forward(None, objects, comm)
     actions, log_prob, _ = actor(objects, comm, None, forward_hidden, None)
     crit_rewards, wins = get_rewards(tasks, actions)
     crit_values, _ = critic(objects, comm, actions, forward_hidden, None)
@@ -219,7 +214,7 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train actor
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
-    _, _, forward_hidden = forward(None, objects, comm, None)
+    _, _, forward_hidden = forward(None, objects, comm)
     actions, log_prob, _ = actor(objects, comm, None, forward_hidden, None)
     log_prob = log_prob.squeeze(1)
     rewards, wins = get_rewards(tasks, actions)
