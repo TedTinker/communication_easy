@@ -9,9 +9,7 @@ import numpy as np
 from math import log
 import matplotlib.pyplot as plt
 
-from utils import default_args, dkl, print,\
-    onehots_to_string, create_comm_mask, comm_map, \
-        multi_hot_action, choose_task
+from utils import default_args, dkl, print, choose_task, calculate_similarity
 from task import Task, Task_Runner
 from buffer import RecurrentReplayBuffer
 from models import Forward, Actor, Critic
@@ -28,10 +26,7 @@ class Agent:
         self.task_probabilities = self.args.task_probabilities[0]
         
         self.tasks = {
-            "1" : Task(actions = 2, objects = 2, shapes = 1, colors = 1, args = self.args),
-            "2" : Task(actions = 1, objects = 2, shapes = 2, colors = 1, args = self.args),
-            "3" : Task(actions = 1, objects = 2, shapes = 1, colors = 2, args = self.args),
-            "4" : Task(actions = 2, objects = 2, shapes = 2, colors = 2, args = self.args)}
+            "1" : Task(actions = 5, objects = 3, shapes = 5, colors = 6, args = self.args)}
         
         self.task_runners = {task_name : Task_Runner(task) for task_name, task in self.tasks.items()}
         self.task = choose_task(self.task_probabilities)
@@ -64,7 +59,7 @@ class Agent:
             "args" : self.args,
             "pred_lists" : {}, "pos_lists" : {}, 
             "agent_lists" : {"forward" : Forward, "actor" : Actor, "critic" : Critic},
-            "rewards" : [], "spot_names" : [], "steps" : [],
+            "wins" : [], "rewards" : [], "spot_names" : [], "steps" : [],
             "accuracy" : [], "complexity" : [],
             "alpha" : [], "actor" : [], 
             "critic_1" : [], "critic_2" : [], 
@@ -82,93 +77,100 @@ class Agent:
                 if(self.epochs < cumulative_epochs): 
                     self.task_probabilities = self.args.task_probabilities[i] 
                     break
-            if(self.episodes % 10 == 0):
+            if(self.episodes % 100 == 0):
                 self.plot_stuff()
-            print("\n\nEPOCH {}, EPISODE {}, TASKS {}\n\n".format(self.epochs, self.episodes, self.task_probabilities))
-            self.training_episode()
+                verbose = True
+                print("EPOCH {}, EPISODE {}, TASKS {}\n".format(self.epochs, self.episodes, self.task_probabilities))
+            else:
+                verbose = False
+            self.training_episode(verbose = verbose)
             if(self.epochs >= sum(self.args.epochs)): break
         
     def plot_stuff(self):
-        rows = 4
-        row_num = 0
-        fig, axs = plt.subplots(rows, figsize = (5, 5 * rows))
-        
-        ax = axs[row_num]
-        ax.plot(self.plot_dict["rewards"])
+        columns = 4
+        fig, axs = plt.subplots(nrows=1, ncols=columns, figsize=(5 * columns, 5))
+
+        # First Column
+        ax = axs[0]
+        ax.plot(self.plot_dict["wins"])
         try:
-            rolling_average = np.convolve(self.plot_dict["rewards"], np.ones(100)/100, mode='valid') # Rolling average with a window of 10
+            rolling_average = np.convolve(self.plot_dict["wins"], np.ones(100)/100, mode='valid')  # Rolling average with a window of 100
             ax.plot(rolling_average)
         except: pass
-        ax.set_ylabel("Reward")
+        ax.set_ylabel("Wins")
         ax.set_xlabel("Epochs")
-        ax.set_title("Rewards")
-        row_num += 1
-        
-        ax = axs[row_num]
+        ax.set_title("Wins")
+
+        # Second Column
+        ax = axs[1]
         ax.plot(self.plot_dict["accuracy"])
         ax.plot(self.plot_dict["complexity"])
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Accuracy and Complexity")
-        row_num += 1
-        
-        ax = axs[row_num]
+
+        # Third Column
+        ax = axs[2]
         ax.plot([actor_loss for actor_loss in self.plot_dict["actor"] if actor_loss != None])
         ax.plot([alpha_loss for alpha_loss in self.plot_dict["alpha"] if alpha_loss != None])
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Actor")
-        row_num += 1
-        
-        ax = axs[row_num]
+
+        # Fourth Column
+        ax = axs[3]
         ax.plot(self.plot_dict["critic_1"])
         ax.plot(self.plot_dict["critic_2"])
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Critics")
-        row_num += 1
-        
+
         plt.show()
         plt.close()
                 
     
     
-    def step_in_episode(self, prev_action, hq_m1, ha_m1, push):
+    def step_in_episode(self, prev_action, hq_m1, ha_m1, push, verbose):
         with torch.no_grad():
-            observation, communication  = self.task.obs()
+            obj, communication = self.task.obs()
+            recommended_action = self.task.task.get_recommended_action()
             _, _, hp = self.forward.p(prev_action, hq_m1)
-            _, _, hq = self.forward.q(prev_action, observation, communication, hq_m1)
-            action, _, ha = self.actor(observation, communication, prev_action, hq[0].clone().detach(), ha_m1) 
-            reward, done = self.task.action(action)
-            next_observation, next_communication = self.task.obs()
+            _, _, hq = self.forward.q(prev_action, obj, communication, hq_m1)
+            action, _, ha = self.actor(obj, communication, prev_action, hq[0].clone().detach(), ha_m1) 
+            reward, done, win = self.task.action(action, verbose)
+            next_obj, next_communication = self.task.obs()
             if(push): 
                 self.memory.push(
-                    observation, 
+                    obj, 
                     communication, 
                     action, 
+                    recommended_action,
                     reward, 
-                    next_observation, 
+                    next_obj, 
                     next_communication, 
                     done)
         torch.cuda.empty_cache()
-        return(action, hp, hq, ha, reward, done)
+        return(action, hp, hq, ha, reward, done, win)
             
            
     
-    def training_episode(self, push = True):
+    def training_episode(self, push = True, verbose = False):
         done = False ; steps = 0
         prev_action = torch.zeros((1, 1, self.args.action_shape))
         hq = None ; ha = None
         
-        self.task = self.task_runners[choose_task(self.task_probabilities)]
-        self.task.begin()        
+        selected_task = choose_task(self.task_probabilities)
+        self.task = self.task_runners[selected_task]
+        if(verbose):
+            print("TASK:", selected_task)
+        self.task.begin(verbose)        
         for step in range(self.args.max_steps):
             self.steps += 1 
             if(not done):
                 steps += 1
-                prev_action, hp, hq, ha, reward, done = self.step_in_episode(prev_action, hq, ha, push)
+                prev_action, hp, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push, verbose)
             if(self.steps % self.args.steps_per_epoch == 0):
-                plot_data = self.epoch(batch_size = self.args.batch_size)
+                plot_data = self.epoch(self.args.batch_size, verbose)
                 if(plot_data == False): pass
                 else:
                     l, e, ic, ie, prediction_error, hidden_state = plot_data
@@ -187,21 +189,23 @@ class Agent:
                             self.plot_dict["hidden_state"][layer].append(f)    
         self.plot_dict["steps"].append(steps)
         self.plot_dict["rewards"].append(reward)
+        self.plot_dict["wins"].append(win)
         self.episodes += 1
     
     
     
-    def epoch(self, batch_size):
+    def epoch(self, batch_size, verbose):
                                 
         batch = self.memory.sample(batch_size)
         if(batch == False): return(False)
                 
         self.epochs += 1
 
-        observations, communications, actions, rewards, dones, masks = batch
-        observations = torch.from_numpy(observations)
+        objects, communications, actions, recommended_actions, rewards, dones, masks = batch
+        objects = torch.from_numpy(objects)
         communications = torch.from_numpy(communications)
         actions = torch.from_numpy(actions)
+        recommended_actions = torch.from_numpy(recommended_actions)
         rewards = torch.from_numpy(rewards)
         dones = torch.from_numpy(dones)
         masks = torch.from_numpy(masks)
@@ -211,27 +215,37 @@ class Agent:
         steps = rewards.shape[1]
         
         #print("\n\n")
-        #print("observations: {}. communications: {}. actions: {}. rewards: {}. dones: {}. masks: {}.".format(
-        #    observations.shape, communications.shape, actions.shape, rewards.shape, dones.shape, masks.shape))
+        #print("objects: {}. communications: {}. actions: {}. rewards: {}. dones: {}. masks: {}.".format(
+        #    objects.shape, communications.shape, actions.shape, rewards.shape, dones.shape, masks.shape))
         #print("\n\n")
         
                 
         
         # Train forward
         (zp_mu_list, zp_std_list), \
-        (zq_mu_list, zq_std_list, pred_observations, pred_communications, hq_lists) = self.forward(actions, observations, communications)
+        (zq_mu_list, zq_std_list, pred_objects, pred_communications, hq_lists) = self.forward(actions, objects, communications)
         hqs = hq_lists[0]
         
-        observation_loss   = F.cross_entropy(pred_observations, observations[:,1:], reduction = "none")
-        observation_loss = observation_loss.reshape((episodes, steps, 2 * self.args.objects))
-        observation_loss = observation_loss.mean(-1).unsqueeze(-1) * masks
+        object_loss   = F.binary_cross_entropy(pred_objects, objects[:,1:], reduction = "none")
+        object_loss = object_loss.reshape((episodes, steps, self.args.objects * (self.args.shapes + self.args.colors)))
+        object_loss = object_loss.mean(-1).unsqueeze(-1) * masks
+        
+        if(verbose):
+            print("Objects:", objects[0,1])
+            print("Prediciton:", pred_objects[0,0])
+        
         pred_comm = pred_communications.reshape((episodes * steps * self.args.max_comm_len, self.args.communication_shape))
         target_communications = communications[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.communication_shape))
         target_communications = torch.argmax(target_communications, dim=-1)
         communication_loss = F.cross_entropy(pred_comm, target_communications, reduction = "none")
         communication_loss = communication_loss.reshape((episodes, steps, self.args.max_comm_len))
         communication_loss = communication_loss.mean(-1).unsqueeze(-1) * masks
-        accuracy_for_prediction_error = observation_loss + communication_loss
+        
+        #if(verbose):
+        #    print("Communication:", communications[0,1])
+        #    print("Prediciton:", pred_comm.reshape((episodes, steps, self.args.max_comm_len, self.args.communication_shape))[0,0])
+        
+        accuracy_for_prediction_error = object_loss + communication_loss
         accuracy           = accuracy_for_prediction_error.mean()
         
         complexity_for_hidden_state = [dkl(zq_mu, zq_std, zp_mu, zp_std).mean(-1).unsqueeze(-1) * all_masks for (zq_mu, zq_std, zp_mu, zp_std) in zip(zq_mu_list, zq_std_list, zp_mu_list, zp_std_list)]
@@ -249,8 +263,7 @@ class Agent:
         
         # Get curiosity                  
         if(self.args.dkl_max != None):
-            complexity_for_hidden_state = [torch.clamp(c, min = 0, max = self.args.dkl_max) for c in complexity_for_hidden_state]
-            #complexity_for_hidden_state = torch.tanh(complexity_for_hidden_state) # Consider other clamps!
+            complexity_for_hidden_state = [torch.tanh(c) for c in complexity_for_hidden_state]
         prediction_error_curiosity = accuracy_for_prediction_error * (self.args.prediction_error_eta if self.args.prediction_error_eta != None else self.prediction_error_eta)
         hidden_state_curiosities = [complexity_for_hidden_state[layer] * (self.args.hidden_state_eta[layer] if self.args.hidden_state_eta[layer] != None else self.hidden_state_eta[layer]) for layer in range(self.args.layers)]
         hidden_state_curiosity = sum(hidden_state_curiosities)
@@ -265,26 +278,30 @@ class Agent:
                 
         # Train critics
         with torch.no_grad():
-            new_actions, log_pis_next, _ = self.actor(observations, communications, actions, hqs.clone().detach())
-            Q_target1_next, _ = self.critic1_target(observations, communications, new_actions, hqs.clone().detach())
-            Q_target2_next, _ = self.critic2_target(observations, communications, new_actions, hqs.clone().detach())
+            new_actions, log_pis_next, _ = self.actor(objects, communications, actions, hqs.clone().detach(), None)
+            Q_target1_next, _ = self.critic1_target(objects, communications, new_actions, hqs.clone().detach(), None)
+            Q_target2_next, _ = self.critic2_target(objects, communications, new_actions, hqs.clone().detach(), None)
             log_pis_next = log_pis_next[:,1:]
             Q_target_next = torch.min(Q_target1_next, Q_target2_next)
             Q_target_next = Q_target_next[:,1:]
             if self.args.alpha == None: Q_targets = rewards + (self.args.GAMMA * (1 - dones) * (Q_target_next - self.alpha * log_pis_next))
             else:                       Q_targets = rewards + (self.args.GAMMA * (1 - dones) * (Q_target_next - self.args.alpha * log_pis_next))
         
-        Q_1, _ = self.critic1(observations[:,:-1], communications[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach())
+        Q_1, _ = self.critic1(objects[:,:-1], communications[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
         critic1_loss = 0.5*F.mse_loss(Q_1*masks, Q_targets*masks)
         self.critic1_opt.zero_grad()
         critic1_loss.backward()
         self.critic1_opt.step()
         
-        Q_2, _ = self.critic2(observations[:,:-1], communications[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach())
+        Q_2, _ = self.critic2(objects[:,:-1], communications[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
         critic2_loss = 0.5*F.mse_loss(Q_2*masks, Q_targets*masks)
         self.critic2_opt.zero_grad()
         critic2_loss.backward()
         self.critic2_opt.step()
+        
+        if(verbose):
+            print("Rewards:", rewards[0,0])
+            print("Prediciton:", Q_1[0,0])
         
         self.soft_update(self.critic1, self.critic1_target, self.args.tau)
         self.soft_update(self.critic2, self.critic2_target, self.args.tau)
@@ -294,7 +311,7 @@ class Agent:
         
         # Train alpha
         if self.args.alpha == None:
-            _, log_pis, _ = self.actor(observations[:,:-1], communications[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach())
+            _, log_pis, _ = self.actor(objects[:,:-1], communications[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), None)
             alpha_loss = -(self.log_alpha.to(self.args.device) * (log_pis + self.target_entropy))*masks
             alpha_loss = alpha_loss.mean() / masks.mean()
             self.alpha_opt.zero_grad()
@@ -311,7 +328,7 @@ class Agent:
         if self.epochs % self.args.d == 0:
             if self.args.alpha == None: alpha = self.alpha 
             else:                       alpha = self.args.alpha
-            new_actions, log_pis, _ = self.actor(observations[:,:-1], communications[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach())
+            new_actions, log_pis, _ = self.actor(objects[:,:-1], communications[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), None)
             if self.args.action_prior == "normal":
                 loc = torch.zeros(self.args.action_shape, dtype=torch.float64).to(self.args.device)
                 n = self.args.action_shape
@@ -320,11 +337,13 @@ class Agent:
                 policy_prior_log_prrgbd = policy_prior.log_prob(new_actions).unsqueeze(-1)
             elif self.args.action_prior == "uniform":
                 policy_prior_log_prrgbd = 0.0
-            Q_1, _ = self.critic1(observations[:,:-1], communications[:,:-1], new_actions, hqs[:,:-1].clone().detach())
-            Q_2, _ = self.critic2(observations[:,:-1], communications[:,:-1], new_actions, hqs[:,:-1].clone().detach())
+            Q_1, _ = self.critic1(objects[:,:-1], communications[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
+            Q_2, _ = self.critic2(objects[:,:-1], communications[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
             Q = torch.min(Q_1, Q_2).mean(-1).unsqueeze(-1)
             intrinsic_entropy = torch.mean((alpha * log_pis)*masks).item()
             actor_loss = (alpha * log_pis - policy_prior_log_prrgbd - Q)*masks
+            recommendation_value = self.args.delta * calculate_similarity(recommended_actions, new_actions)
+            actor_loss += recommendation_value.unsqueeze(-1)
             actor_loss = actor_loss.mean() / masks.mean()
 
             self.actor_opt.zero_grad()
@@ -398,5 +417,5 @@ class Agent:
         
         
 if __name__ == "__main__":
-    agent = Agent(0)
+    agent = Agent(default_args)
 # %%
