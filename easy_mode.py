@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 
 from utils import default_args, args, print, init_weights, Ted_Conv1d, episodes_steps, pad_zeros, select_actions_objects, multi_hot_action, var, sample, attach_list, calculate_similarity
 from task import Task
-from mtrnn import MTRNN
 from submodules import Obs_IN, Obs_OUT, Action_IN
 
 
@@ -56,6 +55,7 @@ def get_rewards(tasks, action):
     
     
 
+#"""
 class Forward(nn.Module): 
     
     def __init__(self, args = default_args):
@@ -68,7 +68,8 @@ class Forward(nn.Module):
         self.between = nn.Sequential(
             nn.Linear(
                 in_features = 2 * args.hidden_size,
-                out_features = 2 * args.hidden_size))
+                out_features = 1 * args.hidden_size))
+        self.prev_action_in = Action_IN(self.args)
         self.predict_obs = Obs_OUT(args)
         
         self.apply(init_weights)
@@ -77,9 +78,161 @@ class Forward(nn.Module):
     def forward(self, prev_action, objects, comm):
         obs = self.obs_in(objects, comm)
         hidden = self.between(obs)
-        pred_objects, pred_comm = self.predict_obs(hidden)
-        return(pred_objects, pred_comm, hidden)
+        prev_action = self.prev_action_in(prev_action)
+        pred_objects, pred_comm = self.predict_obs(torch.cat([prev_action, hidden], dim = -1))
+        return((None, None), (None, None, pred_objects, pred_comm, hidden))
+
+""" # I think this won't work because of just one step? Something's not being used right.
+
+class Forward(nn.Module): 
     
+    def __init__(self, args = default_args):
+        super(Forward, self).__init__()
+        
+        self.args = args
+        self.layers = len(args.time_scales)
+                
+        self.obs_in = Obs_IN(args)
+        self.action_in = Action_IN(args)
+        
+        zp_mu_layers  = []
+        zp_std_layers = []
+        zq_mu_layers  = []
+        zq_std_layers = []
+        mtrnn_layers  = []
+        
+        for layer in range(self.layers): 
+        
+            zp_mu_layers.append(nn.Sequential(
+                nn.Linear(args.hidden_size + (args.hidden_size if layer == 0 else 0), args.hidden_size), 
+                nn.PReLU(),
+                nn.Dropout(.2),
+                nn.Linear(args.hidden_size, args.state_size),
+                nn.Tanh()))
+            zp_std_layers.append(nn.Sequential(
+                nn.Linear(args.hidden_size + (args.hidden_size if layer == 0 else 0), args.hidden_size), 
+                nn.PReLU(),
+                nn.Dropout(.2),
+                nn.Linear(args.hidden_size, args.state_size),
+                nn.Softplus()))
+            
+            zq_mu_layers.append(nn.Sequential(
+                nn.Linear(args.hidden_size + (args.hidden_size * 3 if layer == 0 else args.hidden_size), args.hidden_size), 
+                nn.PReLU(),
+                nn.Dropout(.2),
+                nn.Linear(args.hidden_size, args.state_size),
+                nn.Tanh()))
+            zq_std_layers.append(nn.Sequential(
+                nn.Linear(args.hidden_size + (args.hidden_size * 3 if layer == 0 else args.hidden_size), args.hidden_size), 
+                nn.PReLU(),
+                nn.Dropout(.2),
+                nn.Linear(args.hidden_size, args.state_size),
+                nn.Softplus()))
+            
+            mtrnn_layers.append(MTRNN(
+                input_size = args.state_size + (args.hidden_size if layer + 1 < self.layers else 0),
+                hidden_size = args.hidden_size, 
+                time_constant = args.time_scales[layer],
+                args = args))
+            
+        self.zp_mu_layers  = nn.ModuleList(zp_mu_layers)
+        self.zp_std_layers = nn.ModuleList(zp_std_layers)
+        self.zq_mu_layers  = nn.ModuleList(zq_mu_layers)
+        self.zq_std_layers = nn.ModuleList(zq_std_layers)
+        self.mtrnn_layers  = nn.ModuleList(mtrnn_layers)
+        
+        self.predict_obs = Obs_OUT(args)
+        
+        self.apply(init_weights)
+        self.to(args.device)
+        
+    def p(self, prev_action, hq_m1_list = None, episodes = 1):
+        if(hq_m1_list == None): hq_m1_list  = [torch.zeros(episodes, 1, self.args.hidden_size)] * self.layers
+        [prev_action, hq_m1_list] = attach_list([prev_action, hq_m1_list], self.args.device)
+        prev_action = self.action_in(prev_action)
+        zp_mu_list = [] ; zp_std_list = [] ; zp_list = [] ; hp_list = []
+        for layer in range(self.layers):
+            hq_m1 = hq_m1_list[layer]
+            if(len(hq_m1.shape) == 2): hq_m1 = hq_m1.unsqueeze(1)
+            z_input = hq_m1 if layer != 0 else torch.cat([hq_m1, prev_action], dim = -1) 
+            zp_mu, zp_std = var(z_input, self.zp_mu_layers[layer], self.zp_std_layers[layer], self.args)
+            zp_mu_list.append(zp_mu) ; zp_std_list.append(zp_std) ; zp_list.append(sample(zp_mu, zp_std, self.args.device))
+            h_input = zp_list[layer] if layer+1 == self.layers else torch.cat([zp_list[layer], hq_m1_list[layer+1]], dim = -1) 
+            hp = self.mtrnn_layers[layer](h_input, hq_m1_list[layer]) 
+            hp_list.append(hp)
+        return(zp_mu_list, zp_std_list, hp_list)
+    
+    def q(self, prev_action, objects, comm, hq_m1_list = None):
+        if(len(prev_action.shape) == 2): prev_action = prev_action.unsqueeze(1)
+        if(len(objects.shape)   == 2):       objects         = objects.unsqueeze(0)
+        if(len(objects.shape)   == 3):       objects         = objects.unsqueeze(1)
+        if(len(comm.shape)  == 2):       comm        = comm.unsqueeze(0)
+        if(len(comm.shape)  == 3):       comm        = comm.unsqueeze(1)
+        episodes, steps = episodes_steps(objects)
+        if(hq_m1_list == None):     hq_m1_list = [torch.zeros(episodes, steps, self.args.hidden_size)] * self.layers
+        [prev_action, objects, comm, hq_m1_list] = attach_list([prev_action, objects, comm, hq_m1_list], self.args.device)
+        obs = self.obs_in(objects, comm)
+        prev_action = self.action_in(prev_action)
+        zq_mu_list = [] ; zq_std_list = [] ; zq_list = [] ; hq_list = []
+        for layer in range(self.layers):
+            z_input = torch.cat((hq_m1_list[layer], obs, prev_action), dim=-1) if layer == 0 else torch.cat((hq_m1_list[layer], hq_list[layer-1]), dim=-1)
+            zq_mu, zq_std = var(z_input, self.zq_mu_layers[layer], self.zq_std_layers[layer], self.args)        
+            zq_mu_list.append(zq_mu) ; zq_std_list.append(zq_std) ; zq_list.append(sample(zq_mu, zq_std, self.args.device))
+            h_input = zq_list[layer] if layer+1 == self.layers else torch.cat([zq_list[layer], hq_m1_list[layer+1]], dim = -1)
+            hq = self.mtrnn_layers[layer](h_input, hq_m1_list[layer])
+            hq_list.append(hq)
+        return(zq_mu_list, zq_std_list, hq_list)
+        
+    def predict(self, action, h): 
+        if(len(action.shape) == 2): action = action.unsqueeze(1)
+        if(len(h[0].shape) == 2):   h[0]   = h[0].unsqueeze(1)
+        [action, h] = attach_list([action, h], self.args.device)
+        h_w_action = torch.cat([self.action_in(action), h[0]], dim = -1)
+        pred_objects, pred_comm = self.predict_obs(h_w_action)
+        #detach_list([h_w_action])
+        return(pred_objects, pred_comm)
+    
+    def forward(self, prev_action, objects, comm):
+        if(len(prev_action.shape) == 2): prev_action = prev_action.unsqueeze(1)
+        if(len(objects.shape)   == 2):       objects         = objects.unsqueeze(0)
+        if(len(objects.shape)   == 3):       objects         = objects.unsqueeze(1)
+        if(len(comm.shape)  == 2):       comm        = comm.unsqueeze(0)
+        if(len(comm.shape)  == 3):       comm        = comm.unsqueeze(1)
+        [prev_action, objects, comm] = attach_list([prev_action, objects, comm], self.args.device)
+        episodes, steps = episodes_steps(objects)
+        zp_mu_lists = [] ; zp_std_lists = [] ;                                                    
+        zq_mu_lists = [] ; zq_std_lists = [] ; zq_object_pred_list = [] ; zq_comm_pred_list = [] ; hq_lists = [[torch.zeros(episodes, 1, self.args.hidden_size).to(self.args.device)] * self.layers]
+        step = -1
+        for step in range(steps-1):
+            zp_mu_list, zp_std_list, hp_list = self.p(prev_action[:,step],                              hq_lists[-1], episodes = episodes)
+            zq_mu_list, zq_std_list, hq_list = self.q(prev_action[:,step], objects[:,step], comm[:,step], hq_lists[-1])
+            zq_object_pred, zq_comm_pred = self.predict(prev_action[:,step+1], hq_list)
+            zp_mu_lists.append(zp_mu_list) ; zp_std_lists.append(zp_std_list) 
+            zq_mu_lists.append(zq_mu_list) ; zq_std_lists.append(zq_std_list) ; hq_lists.append(hq_list)
+            zq_object_pred_list.append(zq_object_pred) ; zq_comm_pred_list.append(zq_comm_pred)
+        zp_mu_list, zp_std_list, hp_list = self.p(prev_action[:,step+1],                                hq_lists[-1], episodes = episodes)
+        zq_mu_list, zq_std_list, hq_list = self.q(prev_action[:,step+1], objects[:,step+1], comm[:,step+1], hq_lists[-1])
+        
+        # Just for 1-step stuff
+        hq_lists = [hq_list]
+        zq_object_pred, zq_comm_pred = self.predict(prev_action[:,step+1], hq_list)
+        zq_object_pred_list.append(zq_object_pred) ; zq_comm_pred_list.append(zq_comm_pred)
+        
+        zp_mu_lists.append(zp_mu_list) ; zp_std_lists.append(zp_std_list) 
+        zq_mu_lists.append(zq_mu_list) ; zq_std_lists.append(zq_std_list)
+        hq_lists.append(hq_lists.pop(0))    
+        hq_lists = [torch.cat([hq_list[layer] for hq_list in hq_lists], dim = 1) for layer in range(self.args.layers)]
+        zp_mu_list  = [torch.cat([zp_mu[layer]  for zp_mu  in zp_mu_lists],  dim = 1) for layer in range(self.args.layers)]
+        zp_std_list = [torch.cat([zp_std[layer] for zp_std in zp_std_lists], dim = 1) for layer in range(self.args.layers)]
+        zq_mu_list  = [torch.cat([zq_mu[layer]  for zq_mu  in zq_mu_lists],  dim = 1) for layer in range(self.args.layers)]
+        zq_std_list = [torch.cat([zq_std[layer] for zq_std in zq_std_lists], dim = 1) for layer in range(self.args.layers)]
+        pred_objects = torch.cat(zq_object_pred_list,  dim = 1)
+        pred_communications  = torch.cat(zq_comm_pred_list, dim = 1)
+        #pred_communications *= create_comm_mask(pred_communications)
+        return(
+            (zp_mu_list, zp_std_list), 
+            (zq_mu_list, zq_std_list, pred_objects, pred_communications, hq_lists[0]))
+"""
     
     
 forward = Forward(args)
@@ -88,9 +241,9 @@ forward_opt = optim.Adam(forward.parameters(), lr=args.actor_lr)
 print(forward)
 print()
 print(torch_summary(forward, 
-                    ((1, args.action_shape),
-                     (1, args.objects, args.shapes + args.colors), 
-                     (1, args.max_comm_len, args.communication_shape))))
+                    ((1, 1, args.action_shape),
+                     (1, 1, args.objects, args.shapes + args.colors), 
+                     (1, 1, args.max_comm_len, args.communication_shape))))
 
 
 
@@ -104,7 +257,7 @@ class Actor(nn.Module):
         self.obs_in = Obs_IN(args)
 
         self.lin = nn.Sequential(
-            nn.Linear(2 * args.hidden_size, args.hidden_size),
+            nn.Linear(args.hidden_size, args.hidden_size),
             nn.PReLU())
         self.mu = nn.Sequential(
             nn.Linear(args.hidden_size, self.args.actions + self.args.objects))
@@ -137,7 +290,7 @@ print(torch_summary(actor,
                     ((1, args.objects, args.shapes + args.colors), 
                      (1, args.max_comm_len, args.communication_shape),
                      (1, args.action_shape),
-                     (1, 2 * args.hidden_size),
+                     (1, args.hidden_size),
                      (1, 1))))
 
 
@@ -155,7 +308,7 @@ class Critic(nn.Module):
         
         self.value = nn.Sequential(
             nn.Linear(
-                in_features = 5 * self.args.hidden_size,
+                in_features = 4 * self.args.hidden_size,
                 out_features = self.args.hidden_size),
             nn.PReLU(),
             nn.Linear(                
@@ -181,8 +334,12 @@ print(torch_summary(critic,
                     ((1, args.objects, args.shapes + args.colors), 
                      (1, args.max_comm_len, args.communication_shape),
                      (1, args.action_shape),
-                     (1, 2 * args.hidden_size),
+                     (1, args.hidden_size),
                      (1, 1))))
+
+
+
+prev_action = torch.zeros((64, 1, args.action_shape))
 
 
 
@@ -190,7 +347,7 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train forward
     tasks, goals, real_objects, real_comm, recommended_actions = batch_of_tasks(batch_size)
-    pred_objects, pred_comm, forward_hidden = forward(None, real_objects, real_comm)
+    (_, _), (_, _, pred_objects, pred_comm, forward_hidden) = forward(prev_action, real_objects, real_comm)
     pred_objects = pred_objects.squeeze(1)
     pred_comm = pred_comm.squeeze(1)
     object_loss = F.binary_cross_entropy(pred_objects, real_objects)
@@ -202,7 +359,7 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train critic
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
-    _, _, forward_hidden = forward(None, objects, comm)
+    (_, _), (_, _, pred_objects, pred_comm, forward_hidden) = forward(prev_action, objects, comm)
     actions, log_prob, _ = actor(objects, comm, None, forward_hidden, None)
     crit_rewards, wins = get_rewards(tasks, actions)
     crit_values, _ = critic(objects, comm, actions, forward_hidden, None)
@@ -214,7 +371,7 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train actor
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
-    _, _, forward_hidden = forward(None, objects, comm)
+    (_, _), (_, _, pred_objects, pred_comm, forward_hidden) = forward(prev_action, objects, comm)
     actions, log_prob, _ = actor(objects, comm, None, forward_hidden, None)
     log_prob = log_prob.squeeze(1)
     rewards, wins = get_rewards(tasks, actions)
