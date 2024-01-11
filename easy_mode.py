@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from utils import default_args, args, print, init_weights, Ted_Conv1d, episodes_steps, pad_zeros, select_actions_objects, multi_hot_action, var, sample, attach_list, calculate_similarity
 from task import Task
 from mtrnn import MTRNN
-from submodules import Action_IN
+from submodules import Obs_IN, Obs_OUT, Action_IN
 
 
 
@@ -53,160 +53,10 @@ def get_rewards(tasks, action):
         wins.append(win)
     rewards = torch.tensor(rewards).float().unsqueeze(-1)
     return(rewards, wins)
+    
+    
+    
 
-
-
-class Objects_IN(nn.Module):
-
-    def __init__(self, args = default_args):
-        super(Objects_IN, self).__init__()  
-        
-        self.args = args
-        
-        self.objects_lin = nn.Sequential(
-            nn.Linear(
-                in_features = self.args.shapes + self.args.colors, 
-                out_features = self.args.hidden_size),
-            nn.PReLU(),
-            nn.Linear(
-                in_features = self.args.hidden_size, 
-                out_features = self.args.hidden_size),
-            nn.PReLU())
-        
-        self.objects_lin_2 = nn.Sequential(
-            nn.Linear(
-                in_features = self.args.objects * self.args.hidden_size, 
-                out_features = self.args.hidden_size),
-            nn.PReLU())
-                
-        self.apply(init_weights)
-        self.to(self.args.device)
-        
-    def forward(self, objects):
-        if(len(objects.shape) == 2):   objects  = objects.unsqueeze(1)
-        if(len(objects.shape) == 3):   objects  = objects.unsqueeze(1)
-        episodes, steps = episodes_steps(objects)
-        objects = self.objects_lin(objects)
-        objects = objects.reshape((episodes, steps, self.args.objects * self.args.hidden_size))
-        objects = self.objects_lin_2(objects)
-        return(objects)
-    
-    
-    
-class Comm_IN(nn.Module):
-
-    def __init__(self, args = default_args):
-        super(Comm_IN, self).__init__()  
-        
-        self.args = args
-        
-        self.comm_lin = nn.Sequential(
-            nn.Linear(
-                in_features = self.args.max_comm_len * self.args.communication_shape, 
-                out_features = self.args.hidden_size),
-            nn.PReLU(),
-            nn.Linear(
-                in_features = self.args.hidden_size, 
-                out_features = self.args.hidden_size),
-            nn.PReLU())
-                
-        self.apply(init_weights)
-        self.to(self.args.device)
-        
-    def forward(self, comm):
-        if(len(comm.shape) == 2):  comm = comm.unsqueeze(0)
-        if(len(comm.shape) == 3):  comm = comm.unsqueeze(1)
-        episodes, steps = episodes_steps(comm)
-        comm = pad_zeros(comm, self.args.max_comm_len)
-        comm = comm.reshape((episodes, steps, self.args.max_comm_len * self.args.communication_shape))
-        comm = self.comm_lin(comm)
-        return(comm)
-    
-    
-    
-class Obs_IN(nn.Module):
-    
-    def __init__(self, args = default_args):
-        super(Obs_IN, self).__init__()  
-                
-        self.args = args
-        self.objects_in = Objects_IN(self.args)
-        self.comm_in = Comm_IN(self.args)
-        
-    def forward(self, objects, comm):
-        objects = self.objects_in(objects)
-        comm = self.comm_in(comm)
-        return(torch.cat([objects, comm], dim = -1))
-    
-    
-    
-class Objects_OUT(nn.Module):
-
-    def __init__(self, args = default_args):
-        super(Objects_OUT, self).__init__()  
-                
-        self.args = args
-        
-        self.objects_out = nn.Sequential(
-            nn.Dropout(.2),
-            nn.Linear(2 * self.args.hidden_size, self.args.hidden_size), 
-            nn.PReLU(),
-            nn.Linear(self.args.hidden_size, self.args.hidden_size), 
-            nn.PReLU(),
-            nn.Linear(self.args.hidden_size, self.args.observation_shape),
-            nn.Sigmoid())
-        
-        self.apply(init_weights)
-        self.to(self.args.device)
-                
-    def forward(self, h_w_action):
-        if(len(h_w_action.shape) == 2):   h_w_action = h_w_action.unsqueeze(1)
-        episodes, steps = episodes_steps(h_w_action)
-        [h_w_action] = attach_list([h_w_action], self.args.device)
-        objects_pred = self.objects_out(h_w_action)
-        objects_pred = objects_pred.reshape((episodes, steps, self.args.objects, self.args.shapes + self.args.colors))
-        return(objects_pred)
-    
-    
-    
-class Comm_OUT(nn.Module):
-
-    def __init__(self, args = default_args):
-        super(Comm_OUT, self).__init__()  
-                
-        self.args = args
-        
-        self.comm_out = nn.Sequential(
-            nn.Linear(
-                in_features = 2 * self.args.hidden_size, 
-                out_features = self.args.max_comm_len * self.args.communication_shape))
-        
-        self.apply(init_weights)
-        self.to(self.args.device)
-                
-    def forward(self, h_w_action):
-        if(len(h_w_action.shape) == 2):   h_w_action = h_w_action.unsqueeze(1)
-        [h_w_action] = attach_list([h_w_action], self.args.device)
-        episodes, steps = episodes_steps(h_w_action)
-        comm_pred = self.comm_out(h_w_action)
-        comm_pred = comm_pred.reshape(episodes, steps, self.args.max_comm_len, self.args.communication_shape)
-        return(comm_pred)
-    
-    
-    
-class Obs_OUT(nn.Module):
-    
-    def __init__(self, args = default_args):
-        super(Obs_OUT, self).__init__()  
-        
-        self.args = args 
-        self.objects_out = Objects_OUT(self.args)
-        self.comm_out = Comm_OUT(self.args)
-        
-    def forward(self, h_w_action):
-        objects_pred = self.objects_out(h_w_action.clone())
-        comm_pred = self.comm_out(h_w_action.clone())
-        return(objects_pred, comm_pred)
 
 
 

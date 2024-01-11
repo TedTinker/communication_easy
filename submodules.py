@@ -25,6 +25,12 @@ class Objects_IN(nn.Module):
                 in_features = self.args.hidden_size, 
                 out_features = self.args.hidden_size),
             nn.PReLU())
+        
+        self.objects_lin_2 = nn.Sequential(
+            nn.Linear(
+                in_features = self.args.objects * self.args.hidden_size, 
+                out_features = self.args.hidden_size),
+            nn.PReLU())
                 
         self.apply(init_weights)
         self.to(self.args.device)
@@ -35,6 +41,7 @@ class Objects_IN(nn.Module):
         episodes, steps = episodes_steps(objects)
         objects = self.objects_lin(objects)
         objects = objects.reshape((episodes, steps, self.args.objects * self.args.hidden_size))
+        objects = self.objects_lin_2(objects)
         return(objects)
     
     

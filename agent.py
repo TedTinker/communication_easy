@@ -241,9 +241,9 @@ class Agent:
         communication_loss = communication_loss.reshape((episodes, steps, self.args.max_comm_len))
         communication_loss = communication_loss.mean(-1).unsqueeze(-1) * masks
         
-        #if(verbose):
-        #    print("Communication:", communications[0,1])
-        #    print("Prediciton:", pred_comm.reshape((episodes, steps, self.args.max_comm_len, self.args.communication_shape))[0,0])
+        if(verbose):
+            print("Communication:", communications[0,1])
+            print("Prediciton:", pred_comm.reshape((episodes, steps, self.args.max_comm_len, self.args.communication_shape))[0,0])
         
         accuracy_for_prediction_error = object_loss + communication_loss
         accuracy           = accuracy_for_prediction_error.mean()

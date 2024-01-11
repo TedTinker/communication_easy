@@ -12,7 +12,6 @@ from submodules import Obs_IN, Obs_OUT, Action_IN
         
         
 
-"""
 class Forward(nn.Module): 
     
     def __init__(self, args = default_args):
@@ -46,13 +45,13 @@ class Forward(nn.Module):
                 nn.Softplus()))
             
             zq_mu_layers.append(nn.Sequential(
-                nn.Linear(args.hidden_size + (args.hidden_size * 2 + self.args.objects * self.args.hidden_size if layer == 0 else args.hidden_size), args.hidden_size), 
+                nn.Linear(args.hidden_size + (args.hidden_size * 3 if layer == 0 else args.hidden_size), args.hidden_size), 
                 nn.PReLU(),
                 nn.Dropout(.2),
                 nn.Linear(args.hidden_size, args.state_size),
                 nn.Tanh()))
             zq_std_layers.append(nn.Sequential(
-                nn.Linear(args.hidden_size + (args.hidden_size * 2 + self.args.objects * self.args.hidden_size if layer == 0 else args.hidden_size), args.hidden_size), 
+                nn.Linear(args.hidden_size + (args.hidden_size * 3 if layer == 0 else args.hidden_size), args.hidden_size), 
                 nn.PReLU(),
                 nn.Dropout(.2),
                 nn.Linear(args.hidden_size, args.state_size),
@@ -150,31 +149,6 @@ class Forward(nn.Module):
         return(
             (zp_mu_list, zp_std_list), 
             (zq_mu_list, zq_std_list, pred_objects, pred_communications, hq_lists))
-"""
-
-class Forward(nn.Module): 
-    
-    def __init__(self, args = default_args):
-        super(Forward, self).__init__()
-        
-        self.args = args
-        self.layers = len(args.time_scales)
-                
-        self.obs_in = Obs_IN(args)
-        self.between = nn.Sequential(
-            nn.Linear(
-                in_features = 2 * args.hidden_size,
-                out_features = 2 * args.hidden_size))
-        self.predict_obs = Obs_OUT(args)
-        
-        self.apply(init_weights)
-        self.to(args.device)
-    
-    def forward(self, objects, comm, forward_hidden):
-        obs = self.obs_in(objects, comm)
-        hidden = self.between(obs)
-        pred_objects, pred_comm = self.predict_obs(hidden)
-        return(pred_objects, pred_comm, hidden)
         
     
 
@@ -225,7 +199,7 @@ class Critic(nn.Module):
         
         self.value = nn.Sequential(
             nn.Linear(
-                in_features = 6 * self.args.hidden_size,
+                in_features = 4 * self.args.hidden_size,
                 out_features = self.args.hidden_size),
             nn.PReLU(),
             nn.Linear(                
