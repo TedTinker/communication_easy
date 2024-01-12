@@ -5,7 +5,13 @@ from torchinfo import summary as torch_summary
 
 from utils import default_args, init_weights, attach_list, detach_list, \
     episodes_steps, pad_zeros, Ted_Conv1d, extract_and_concatenate
-from mtrnn import MTRNN
+
+
+
+if __name__ == "__main__":
+    
+    args = default_args
+    episodes = 4 ; steps = 3
 
 
 
@@ -18,7 +24,7 @@ class Objects_IN(nn.Module):
         
         self.objects_lin = nn.Sequential(
             nn.Linear(
-                in_features = self.args.shapes + self.args.colors, 
+                in_features = self.args.object_shape, 
                 out_features = self.args.hidden_size),
             nn.PReLU(),
             nn.Linear(
@@ -45,6 +51,18 @@ class Objects_IN(nn.Module):
         return(objects)
     
     
+    
+if __name__ == "__main__":
+    
+    objects_in = Objects_IN(args = args)
+    
+    print("\n\n")
+    print(objects_in)
+    print()
+    print(torch_summary(objects_in, 
+                        (episodes, steps, args.objects, args.object_shape)))
+    
+    
 
 """
 class Comm_IN(nn.Module):
@@ -56,7 +74,7 @@ class Comm_IN(nn.Module):
         
         self.comm_embedding = nn.Sequential(
             nn.Embedding(
-                num_embeddings = self.args.communication_shape,
+                num_embeddings = self.args.comm_shape,
                 embedding_dim = self.args.hidden_size),
             nn.PReLU())
         
@@ -111,7 +129,7 @@ class Comm_IN(nn.Module):
         
         self.comm_lin = nn.Sequential(
             nn.Linear(
-                in_features = self.args.max_comm_len * self.args.communication_shape, 
+                in_features = self.args.max_comm_len * self.args.comm_shape, 
                 out_features = self.args.hidden_size),
             nn.PReLU(),
             nn.Linear(
@@ -127,9 +145,21 @@ class Comm_IN(nn.Module):
         if(len(comm.shape) == 3):  comm = comm.unsqueeze(1)
         episodes, steps = episodes_steps(comm)
         comm = pad_zeros(comm, self.args.max_comm_len)
-        comm = comm.reshape((episodes, steps, self.args.max_comm_len * self.args.communication_shape))
+        comm = comm.reshape((episodes, steps, self.args.max_comm_len * self.args.comm_shape))
         comm = self.comm_lin(comm)
         return(comm)
+    
+    
+    
+if __name__ == "__main__":
+    
+    comm_in = Comm_IN(args = args)
+    
+    print("\n\n")
+    print(comm_in)
+    print()
+    print(torch_summary(comm_in, 
+                        (episodes, steps, args.max_comm_len, args.comm_shape)))
     
     
     
@@ -147,6 +177,19 @@ class Obs_IN(nn.Module):
         comm = self.comm_in(comm)
         return(torch.cat([objects, comm], dim = -1))
     
+    
+    
+if __name__ == "__main__":
+    
+    obs_in = Obs_IN(args = args)
+    
+    print("\n\n")
+    print(obs_in)
+    print()
+    print(torch_summary(obs_in, 
+                        ((episodes, steps, args.objects, args.object_shape),
+                         (episodes, steps, args.max_comm_len, args.comm_shape))))
+    
 
 
 class Objects_OUT(nn.Module):
@@ -162,7 +205,7 @@ class Objects_OUT(nn.Module):
             nn.PReLU(),
             nn.Linear(self.args.hidden_size, self.args.hidden_size), 
             nn.PReLU(),
-            nn.Linear(self.args.hidden_size, self.args.observation_shape),
+            nn.Linear(self.args.hidden_size, self.args.objects * self.args.object_shape),
             nn.Sigmoid())
         
         self.apply(init_weights)
@@ -173,8 +216,20 @@ class Objects_OUT(nn.Module):
         episodes, steps = episodes_steps(h_w_action)
         [h_w_action] = attach_list([h_w_action], self.args.device)
         objects_pred = self.objects_out(h_w_action)
-        objects_pred = objects_pred.reshape((episodes, steps, self.args.objects, self.args.shapes + self.args.colors))
+        objects_pred = objects_pred.reshape((episodes, steps, self.args.objects, self.args.object_shape))
         return(objects_pred)
+    
+    
+    
+if __name__ == "__main__":
+
+    objects_out = Objects_OUT(args = args)
+    
+    print("\n\n")
+    print(objects_out)
+    print()
+    print(torch_summary(objects_out, 
+                        (episodes, steps, 2 * args.hidden_size)))
     
     
 
@@ -206,7 +261,7 @@ class Comm_OUT(nn.Module):
             nn.Dropout(.2),
             nn.Linear(
                 in_features = self.args.hidden_size, 
-                out_features = self.args.communication_shape))
+                out_features = self.args.comm_shape))
         
         self.apply(init_weights)
         self.to(self.args.device)
@@ -238,7 +293,7 @@ class Comm_OUT(nn.Module):
         self.comm_out = nn.Sequential(
             nn.Linear(
                 in_features = 2 * self.args.hidden_size, 
-                out_features = self.args.max_comm_len * self.args.communication_shape))
+                out_features = self.args.max_comm_len * self.args.comm_shape))
         
         self.apply(init_weights)
         self.to(self.args.device)
@@ -248,8 +303,21 @@ class Comm_OUT(nn.Module):
         [h_w_action] = attach_list([h_w_action], self.args.device)
         episodes, steps = episodes_steps(h_w_action)
         comm_pred = self.comm_out(h_w_action)
-        comm_pred = comm_pred.reshape(episodes, steps, self.args.max_comm_len, self.args.communication_shape)
+        comm_pred = comm_pred.reshape(episodes, steps, self.args.max_comm_len, self.args.comm_shape)
         return(comm_pred) 
+    
+    
+    
+if __name__ == "__main__":
+    
+    comm_out = Comm_OUT(args = args)
+    
+    print("\n\n")
+    print(comm_out)
+    print()
+    print(torch_summary(comm_out, 
+                        (episodes, steps, 2 * args.hidden_size)))
+    
     
     
 class Obs_OUT(nn.Module):
@@ -293,46 +361,6 @@ class Action_IN(nn.Module):
     
     
 if __name__ == "__main__":
-    
-    args = default_args
-    episodes = 4 ; steps = 3
-    
-    objects_in = Objects_IN(args = args)
-    
-    print("\n\n")
-    print(objects_in)
-    print()
-    print(torch_summary(objects_in, 
-                        (episodes, steps, args.objects, args.shapes + args.colors)))
-    
-    comm_in = Comm_IN(args = args)
-    
-    print("\n\n")
-    print(comm_in)
-    print()
-    print(torch_summary(comm_in, 
-                        (episodes, steps, args.max_comm_len, args.communication_shape)))
-    
-    
-    
-    objects_out = Objects_OUT(args = args)
-    
-    print("\n\n")
-    print(objects_out)
-    print()
-    print(torch_summary(objects_out, 
-                        (episodes, steps, 2 * args.hidden_size)))
-    
-    
-    comm_out = Comm_OUT(args = args)
-    
-    print("\n\n")
-    print(comm_out)
-    print()
-    print(torch_summary(comm_out, 
-                        (episodes, steps, 2 * args.hidden_size)))
-    
-    
     
     action_in = Action_IN(args = args)
     

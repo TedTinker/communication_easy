@@ -23,7 +23,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("DEVICE:", device)
 device = "cpu"
 
-"""
+#"""
 shape_map = {
     0: "pole", 
     1: "T", 
@@ -109,7 +109,7 @@ parser.add_argument('--capacity',           type=int,        default = 250,
 parser.add_argument('--task_probabilities', type=literal,    default = [
     (("1", 1),)],
                     help='List of probabilities of tasks. Agent trains on each set of tasks based on epochs in epochs parameter.')
-parser.add_argument('--max_steps',          type=int,        default = 1,
+parser.add_argument('--max_steps',          type=int,        default = 10,
                     help='How many steps the agent can make in one episode.')
 parser.add_argument('--step_lim_punishment',type=float,      default = -1,
                     help='Extrinsic punishment for taking max_steps steps.')
@@ -131,7 +131,7 @@ parser.add_argument('--shapes',            type=int,        default = 5,
                     help='Maximum count of shapes in one episode.')
 parser.add_argument('--colors',            type=int,        default = 6,
                     help='Maximum count of colors in one episode.')
-parser.add_argument('--max_comm_len',      type=int,        default = 4,
+parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
 
     # Module 
@@ -222,8 +222,8 @@ def extend_list_to_match_length(target_list, length, value):
 
 for arg_set in [default_args, args]:
     arg_set.steps_per_epoch = arg_set.max_steps
-    arg_set.observation_shape = arg_set.objects * (arg_set.shapes + arg_set.colors)
-    arg_set.communication_shape = len(comm_map)
+    arg_set.object_shape = arg_set.shapes + arg_set.colors
+    arg_set.comm_shape = len(comm_map)
     arg_set.action_shape = arg_set.actions + arg_set.objects
     max_length = max(len(arg_set.time_scales), len(arg_set.beta), len(arg_set.hidden_state_eta))
     arg_set.time_scales = extend_list_to_match_length(arg_set.time_scales, max_length, 1)

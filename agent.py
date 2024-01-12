@@ -132,22 +132,22 @@ class Agent:
     
     def step_in_episode(self, prev_action, hq_m1, ha_m1, push, verbose):
         with torch.no_grad():
-            obj, communication = self.task.obs()
+            obj, comm = self.task.obs()
             recommended_action = self.task.task.get_recommended_action()
             _, _, hp = self.forward.p(prev_action, hq_m1)
-            _, _, hq = self.forward.q(prev_action, obj, communication, hq_m1)
-            action, _, ha = self.actor(obj, communication, prev_action, hq[0].clone().detach(), ha_m1) 
+            _, _, hq = self.forward.q(prev_action, obj, comm, hq_m1)
+            action, _, ha = self.actor(obj, comm, prev_action, hq[0].clone().detach(), ha_m1) 
             reward, done, win = self.task.action(action, verbose)
-            next_obj, next_communication = self.task.obs()
+            next_obj, next_comm = self.task.obs()
             if(push): 
                 self.memory.push(
                     obj, 
-                    communication, 
+                    comm, 
                     action, 
                     recommended_action,
                     reward, 
                     next_obj, 
-                    next_communication, 
+                    next_comm, 
                     done)
         torch.cuda.empty_cache()
         return(action, hp, hq, ha, reward, done, win)
@@ -201,9 +201,9 @@ class Agent:
                 
         self.epochs += 1
 
-        objects, communications, actions, recommended_actions, rewards, dones, masks = batch
+        objects, comms, actions, recommended_actions, rewards, dones, masks = batch
         objects = torch.from_numpy(objects)
-        communications = torch.from_numpy(communications)
+        comms = torch.from_numpy(comms)
         actions = torch.from_numpy(actions)
         recommended_actions = torch.from_numpy(recommended_actions)
         rewards = torch.from_numpy(rewards)
@@ -215,15 +215,15 @@ class Agent:
         steps = rewards.shape[1]
         
         #print("\n\n")
-        #print("objects: {}. communications: {}. actions: {}. rewards: {}. dones: {}. masks: {}.".format(
-        #    objects.shape, communications.shape, actions.shape, rewards.shape, dones.shape, masks.shape))
+        #print("objects: {}. comms: {}. actions: {}. rewards: {}. dones: {}. masks: {}.".format(
+        #    objects.shape, comms.shape, actions.shape, rewards.shape, dones.shape, masks.shape))
         #print("\n\n")
         
                 
         
         # Train forward
         (zp_mu_list, zp_std_list), \
-        (zq_mu_list, zq_std_list, pred_objects, pred_communications, hq_lists) = self.forward(actions, objects, communications)
+        (zq_mu_list, zq_std_list, pred_objects, pred_comms, hq_lists) = self.forward(actions, objects, comms)
         hqs = hq_lists[0]
         
         object_loss   = F.binary_cross_entropy(pred_objects, objects[:,1:], reduction = "none")
@@ -234,18 +234,18 @@ class Agent:
             print("Objects:", objects[0,1])
             print("Prediciton:", pred_objects[0,0])
         
-        pred_comm = pred_communications.reshape((episodes * steps * self.args.max_comm_len, self.args.communication_shape))
-        target_communications = communications[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.communication_shape))
-        target_communications = torch.argmax(target_communications, dim=-1)
-        communication_loss = F.cross_entropy(pred_comm, target_communications, reduction = "none")
-        communication_loss = communication_loss.reshape((episodes, steps, self.args.max_comm_len))
-        communication_loss = communication_loss.mean(-1).unsqueeze(-1) * masks
+        pred_comm = pred_comms.reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
+        target_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
+        target_comms = torch.argmax(target_comms, dim=-1)
+        comm_loss = F.cross_entropy(pred_comm, target_comms, reduction = "none")
+        comm_loss = comm_loss.reshape((episodes, steps, self.args.max_comm_len))
+        comm_loss = comm_loss.mean(-1).unsqueeze(-1) * masks
         
         if(verbose):
-            print("Communication:", communications[0,1])
-            print("Prediciton:", pred_comm.reshape((episodes, steps, self.args.max_comm_len, self.args.communication_shape))[0,0])
+            print("comm:", comms[0,1])
+            print("Prediciton:", pred_comm.reshape((episodes, steps, self.args.max_comm_len, self.args.comm_shape))[0,0])
         
-        accuracy_for_prediction_error = object_loss + communication_loss
+        accuracy_for_prediction_error = object_loss + comm_loss
         accuracy           = accuracy_for_prediction_error.mean()
         
         complexity_for_hidden_state = [dkl(zq_mu, zq_std, zp_mu, zp_std).mean(-1).unsqueeze(-1) * all_masks for (zq_mu, zq_std, zp_mu, zp_std) in zip(zq_mu_list, zq_std_list, zp_mu_list, zp_std_list)]
@@ -278,22 +278,22 @@ class Agent:
                 
         # Train critics
         with torch.no_grad():
-            new_actions, log_pis_next, _ = self.actor(objects, communications, actions, hqs.clone().detach(), None)
-            Q_target1_next, _ = self.critic1_target(objects, communications, new_actions, hqs.clone().detach(), None)
-            Q_target2_next, _ = self.critic2_target(objects, communications, new_actions, hqs.clone().detach(), None)
+            new_actions, log_pis_next, _ = self.actor(objects, comms, actions, hqs.clone().detach(), None)
+            Q_target1_next, _ = self.critic1_target(objects, comms, new_actions, hqs.clone().detach(), None)
+            Q_target2_next, _ = self.critic2_target(objects, comms, new_actions, hqs.clone().detach(), None)
             log_pis_next = log_pis_next[:,1:]
             Q_target_next = torch.min(Q_target1_next, Q_target2_next)
             Q_target_next = Q_target_next[:,1:]
             if self.args.alpha == None: Q_targets = rewards + (self.args.GAMMA * (1 - dones) * (Q_target_next - self.alpha * log_pis_next))
             else:                       Q_targets = rewards + (self.args.GAMMA * (1 - dones) * (Q_target_next - self.args.alpha * log_pis_next))
         
-        Q_1, _ = self.critic1(objects[:,:-1], communications[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
+        Q_1, _ = self.critic1(objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
         critic1_loss = 0.5*F.mse_loss(Q_1*masks, Q_targets*masks)
         self.critic1_opt.zero_grad()
         critic1_loss.backward()
         self.critic1_opt.step()
         
-        Q_2, _ = self.critic2(objects[:,:-1], communications[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
+        Q_2, _ = self.critic2(objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
         critic2_loss = 0.5*F.mse_loss(Q_2*masks, Q_targets*masks)
         self.critic2_opt.zero_grad()
         critic2_loss.backward()
@@ -311,7 +311,7 @@ class Agent:
         
         # Train alpha
         if self.args.alpha == None:
-            _, log_pis, _ = self.actor(objects[:,:-1], communications[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), None)
+            _, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), None)
             alpha_loss = -(self.log_alpha.to(self.args.device) * (log_pis + self.target_entropy))*masks
             alpha_loss = alpha_loss.mean() / masks.mean()
             self.alpha_opt.zero_grad()
@@ -328,7 +328,7 @@ class Agent:
         if self.epochs % self.args.d == 0:
             if self.args.alpha == None: alpha = self.alpha 
             else:                       alpha = self.args.alpha
-            new_actions, log_pis, _ = self.actor(objects[:,:-1], communications[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), None)
+            new_actions, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), None)
             if self.args.action_prior == "normal":
                 loc = torch.zeros(self.args.action_shape, dtype=torch.float64).to(self.args.device)
                 n = self.args.action_shape
@@ -337,8 +337,8 @@ class Agent:
                 policy_prior_log_prrgbd = policy_prior.log_prob(new_actions).unsqueeze(-1)
             elif self.args.action_prior == "uniform":
                 policy_prior_log_prrgbd = 0.0
-            Q_1, _ = self.critic1(objects[:,:-1], communications[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
-            Q_2, _ = self.critic2(objects[:,:-1], communications[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
+            Q_1, _ = self.critic1(objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
+            Q_2, _ = self.critic2(objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
             Q = torch.min(Q_1, Q_2).mean(-1).unsqueeze(-1)
             intrinsic_entropy = torch.mean((alpha * log_pis)*masks).item()
             actor_loss = (alpha * log_pis - policy_prior_log_prrgbd - Q)*masks

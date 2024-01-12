@@ -7,6 +7,13 @@ from utils import default_args, init_weights, attach_list, detach_list, episodes
 
 
 
+if __name__ == "__main__":
+    
+    args = default_args
+    episodes = 4 ; steps = 3
+
+
+
 class MTRNNCell(nn.Module):
     def __init__(self, input_size, hidden_size, time_constant, args):
         super(MTRNNCell, self).__init__()
@@ -48,6 +55,23 @@ class MTRNNCell(nn.Module):
         return new_h
     
     
+    
+if __name__ == "__main__":
+    
+    cell = MTRNNCell(
+        input_size = 16,
+        hidden_size = 32,
+        time_constant = 1,
+        args = args)
+    
+    print("\n\n")
+    print(cell)
+    print()
+    print(torch_summary(cell, 
+                        ((episodes, 1, 16), 
+                         (episodes, 1, 32))))
+    
+    
 
 class MTRNN(nn.Module):
     def __init__(self, input_size, hidden_size, time_constant, args):
@@ -73,23 +97,6 @@ class MTRNN(nn.Module):
 
 if __name__ == "__main__":
     
-    args = default_args
-    episodes = 4 ; steps = 3
-    
-    cell = MTRNNCell(
-        input_size = 16,
-        hidden_size = 32,
-        time_constant = 1,
-        args = args)
-    
-    print("\n\n")
-    print(cell)
-    print()
-    print(torch_summary(cell, 
-                        ((episodes, 1, 16), 
-                         (episodes, 1, 32))))
-    
-    
     mtrnn = MTRNN(
         input_size = 16,
         hidden_size = 32,
@@ -97,7 +104,7 @@ if __name__ == "__main__":
         args = args)
     
     print("\n\n")
-    print(cell)
+    print(mtrnn)
     print()
     print(torch_summary(mtrnn, 
                         ((episodes, steps, 16), 

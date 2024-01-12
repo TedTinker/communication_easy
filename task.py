@@ -49,7 +49,7 @@ class Task:
         action = randint(0, self.actions - 1)
         shape, color = choice(self.current_objects)
         self.goal = (action, shape, color)
-        self.goal_text = "{}{}{}.".format(action_map[action], color_map[color], shape_map[shape])
+        self.goal_text = "{} {} {}.".format(action_map[action], color_map[color], shape_map[shape])
         self.goal_comm = string_to_onehots(self.goal_text)
         self.goal_comm = pad_zeros(self.goal_comm, self.args.max_comm_len)
 
