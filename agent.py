@@ -9,7 +9,7 @@ import numpy as np
 from math import log
 import matplotlib.pyplot as plt
 
-from utils import default_args, dkl, print, choose_task, calculate_similarity
+from utils import default_args, dkl, print, choose_task, calculate_similarity, onehots_to_string
 from task import Task, Task_Runner
 from buffer import RecurrentReplayBuffer
 from pvrnn import PVRNN
@@ -38,18 +38,18 @@ class Agent:
         self.alpha_opt = optim.Adam(params=[self.log_alpha], lr=self.args.alpha_lr) 
 
         self.forward = PVRNN(self.args)
-        self.forward_opt = optim.Adam(self.forward.parameters(), lr=self.args.forward_lr)
+        self.forward_opt = optim.Adam(self.forward.parameters(), lr=self.args.actor_lr)
                            
         self.actor = Actor(self.args)
         self.actor_opt = optim.Adam(self.actor.parameters(), lr=self.args.actor_lr) 
         
         self.critic1 = Critic(self.args)
-        self.critic1_opt = optim.Adam(self.critic1.parameters(), lr=self.args.critic_lr)
+        self.critic1_opt = optim.Adam(self.critic1.parameters(), lr=self.args.actor_lr)
         self.critic1_target = Critic(self.args)
         self.critic1_target.load_state_dict(self.critic1.state_dict())
 
         self.critic2 = Critic(self.args)
-        self.critic2_opt = optim.Adam(self.critic2.parameters(), lr=self.args.critic_lr)
+        self.critic2_opt = optim.Adam(self.critic2.parameters(), lr=self.args.actor_lr)
         self.critic2_target = Critic(self.args)
         self.critic2_target.load_state_dict(self.critic2.state_dict())
         
@@ -229,28 +229,28 @@ class Agent:
         (zp_mu, zp_std), (zq_mu, zq_std), (pred_objects, pred_comms), hqs = self.forward(torch.zeros((episodes, self.args.layers, self.args.hidden_size)), objects, comms, actions)
         hqs = hqs[:,:,0]
         
-        object_loss   = F.binary_cross_entropy(pred_objects, objects, reduction = "none")
-        object_loss = object_loss.reshape((episodes, steps+1, self.args.objects * (self.args.shapes + self.args.colors)))
+        object_loss   = F.binary_cross_entropy(pred_objects, objects[:,1:], reduction = "none")
+        object_loss = object_loss.reshape((episodes, steps, self.args.objects * (self.args.shapes + self.args.colors)))
         object_loss = object_loss.mean(-1).unsqueeze(-1) * all_masks
         
         if(verbose):
             print("Objects:", objects[0,1])
             print("Prediciton:", pred_objects[0,0])
         
-        pred_comm = pred_comms.reshape((episodes * (steps+1) * self.args.max_comm_len, self.args.comm_shape))
-        target_comms = comms.reshape((episodes * (steps+1) * self.args.max_comm_len, self.args.comm_shape))
-        target_comms = torch.argmax(target_comms, dim=-1)
-        comm_loss = F.cross_entropy(pred_comm, target_comms, reduction = "none")
-        comm_loss = comm_loss.reshape((episodes, steps+1, self.args.max_comm_len))
+        real_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
+        real_comms = torch.argmax(real_comms, dim = -1)
+        pred_comms = pred_comms.reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
+    
+        comm_loss = F.cross_entropy(pred_comms, real_comms, reduction = "none")
+        comm_loss = comm_loss.reshape((episodes, steps, self.args.max_comm_len))
         comm_loss = comm_loss.mean(-1).unsqueeze(-1) * all_masks
         
-        #if(verbose):
-        #    print("comm:", comms[0,1])
-        #    print("Prediciton:", pred_comm.reshape((episodes, steps+1, self.args.max_comm_len, self.args.comm_shape))[0,0])
+        if(verbose):
+            print("Real comm:", onehots_to_string(comms[0,1]))
+            print("Pred comm:", onehots_to_string(pred_comms.reshape((episodes, steps, self.args.max_comm_len, self.args.comm_shape))[0,0]))
         
-        accuracy_for_prediction_error = object_loss + comm_loss
+        accuracy_for_prediction_error = object_loss + self.args.comm_scaler * comm_loss
         accuracy           = accuracy_for_prediction_error.mean()
-        accuracy_for_prediction_error = accuracy_for_prediction_error[:,1:]
         
         complexity_for_hidden_state = [dkl(zq_mu[:,:,layer], zq_std[:,:,layer], zp_mu[:,:,layer], zp_std[:,:,layer]).mean(-1).unsqueeze(-1) * all_masks for layer in range(self.args.layers)] 
         complexity          = sum([self.args.beta[layer] * complexity_for_hidden_state[layer].mean() for layer in range(self.args.layers)])       

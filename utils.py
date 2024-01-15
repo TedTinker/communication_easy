@@ -98,7 +98,7 @@ parser.add_argument('--batch_size',         type=int,        default = 128,
                     help='How many episodes are sampled for each epoch.')
 parser.add_argument('--GAMMA',              type=float,      default = 0,
                     help='How heavily critics consider the future.')
-parser.add_argument("--d",                  type=int,        default = 2,
+parser.add_argument("--d",                  type=int,        default = 1,
                     help='Delay for training actors.')        
 
     # Memory buffer
@@ -133,6 +133,8 @@ parser.add_argument('--colors',            type=int,        default = 6,
                     help='Maximum count of colors in one episode.')
 parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
+parser.add_argument('--comm_scaler',       type=float,      default = .1,
+                    help='How the forward-model values comm-loss versus object-loss.')
 
     # Module 
 parser.add_argument('--hidden_size',        type=int,        default = 32,

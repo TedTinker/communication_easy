@@ -66,6 +66,7 @@ class PVRNN_LAYER(nn.Module):
             nn.Linear(
                 in_features = self.args.state_size + (self.args.hidden_size if not self.top else 0) + self.args.hidden_size,
                 out_features = self.args.hidden_size))
+        #"""
             
         self.apply(init_weights)
         self.to(self.args.device)
@@ -242,8 +243,11 @@ class PVRNN(nn.Module):
         for i in range(len(lists)):
             lists[i] = torch.cat(lists[i], dim=1)
         zp_mu, zp_std, zq_mu, zq_std, new_hidden_states = lists
-        
-        h_w_actions = torch.cat([new_hidden_states[:,:,0], self.pvrnn_layers[0].action_in(prev_actions)], dim = -1)
+                
+        if(steps == 1):
+            h_w_actions = torch.cat([new_hidden_states[:,:,0], self.pvrnn_layers[0].action_in(prev_actions)], dim = -1)
+        else:
+            h_w_actions = torch.cat([new_hidden_states[:,:-1,0], self.pvrnn_layers[0].action_in(prev_actions[:,1:])], dim = -1)
         pred_objects, pred_comms = self.predict_obs(h_w_actions)
         
         return(

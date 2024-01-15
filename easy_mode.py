@@ -1,6 +1,6 @@
 #%% 
 
-# To do: Make this work for RL's PVRNN!
+# To do: 
 # Improve comm in and out.
 
 import torch
@@ -13,7 +13,9 @@ from torchinfo import summary as torch_summary
 import numpy as np
 import matplotlib.pyplot as plt
 
-from utils import default_args, args, print, init_weights, Ted_Conv1d, episodes_steps, pad_zeros, select_actions_objects, multi_hot_action, var, sample, attach_list, calculate_similarity
+from utils import default_args, args, print, init_weights, Ted_Conv1d, \
+    episodes_steps, pad_zeros, select_actions_objects, multi_hot_action, \
+        var, sample, attach_list, calculate_similarity, onehots_to_string
 from task import Task
 from mtrnn import MTRNN
 from submodules import Obs_IN, Obs_OUT, Action_IN
@@ -76,10 +78,17 @@ def epoch(batch_size = 64, verbose = False):
     # Train forward
     tasks, goals, real_objects, real_comm, recommended_actions = batch_of_tasks(batch_size)
     (_, _), (_, _), (pred_objects, pred_comm), _ = forward(prev_hidden_states, real_objects, real_comm, prev_action)
-    real_comm = real_comm.reshape((real_comm.shape[0] * real_comm.shape[1], real_comm.shape[2], real_comm.shape[3]))
-    pred_comm = pred_comm.reshape((pred_comm.shape[0] * pred_comm.shape[1], pred_comm.shape[2], pred_comm.shape[3]))
+    
+    # Weird. Using one of these makes comm prediction perfect, but won't help the actor!
+    target_comm = real_comm.reshape((real_comm.shape[0] * real_comm.shape[1] * real_comm.shape[2], real_comm.shape[3]))
+    target_comm = torch.argmax(target_comm, dim = -1)
+    predicted_comm = pred_comm.reshape((pred_comm.shape[0] * pred_comm.shape[1] * pred_comm.shape[2], pred_comm.shape[3]))
+    real_comm = real_comm.reshape((real_comm.shape[0] * real_comm.shape[1], args.max_comm_len, args.comm_shape))
+    pred_comm = pred_comm.reshape((pred_comm.shape[0] * pred_comm.shape[1], args.max_comm_len, args.comm_shape))
+    
     object_loss = F.binary_cross_entropy(pred_objects, real_objects)
-    comm_loss = F.cross_entropy(pred_comm, real_comm)
+    comm_loss = .1 * F.cross_entropy(
+        predicted_comm, target_comm)
     forward_loss = object_loss + comm_loss
     forward_opt.zero_grad()
     forward_loss.backward()
@@ -107,7 +116,6 @@ def epoch(batch_size = 64, verbose = False):
     values = values.squeeze(1)
     entropy_value = args.alpha * log_prob
     recommendation_value = args.delta * calculate_similarity(recommended_actions.unsqueeze(1), actions)
-    
     actor_loss = -values.mean() + entropy_value.mean() - recommendation_value.mean()
     actor_opt.zero_grad()
     actor_loss.backward()
@@ -119,9 +127,9 @@ def epoch(batch_size = 64, verbose = False):
         print("PRED OBJECTS:")
         print(pred_objects[0])
         print("REAL COMM:")
-        print(real_comm[0])
+        print(onehots_to_string(real_comm[0]))
         print("PRED COMM:")
-        print(pred_comm[0])
+        print(onehots_to_string(pred_comm[0]))
         
         print("\nREWARD:")
         print(rewards[0])

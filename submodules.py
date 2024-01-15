@@ -5,6 +5,7 @@ from torchinfo import summary as torch_summary
 
 from utils import default_args, init_weights, attach_list, detach_list, \
     episodes_steps, pad_zeros, Ted_Conv1d, extract_and_concatenate
+from mtrnn import MTRNN
 
 
 
@@ -83,7 +84,7 @@ class Comm_IN(nn.Module):
             Ted_Conv1d(
                 in_channels = self.args.hidden_size, 
                 out_channels = [self.args.hidden_size//4]*4, 
-                kernels = [1,1,1,3]),
+                kernels = [1,1,3,5]),
             nn.BatchNorm1d(self.args.hidden_size),
             nn.PReLU())
         
@@ -148,7 +149,7 @@ class Comm_IN(nn.Module):
         comm = comm.reshape((episodes, steps, self.args.max_comm_len * self.args.comm_shape))
         comm = self.comm_lin(comm)
         return(comm)
-    
+#"""
     
     
 if __name__ == "__main__":

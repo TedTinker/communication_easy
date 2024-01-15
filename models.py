@@ -29,7 +29,7 @@ class Actor(nn.Module):
         self.obs_in = Obs_IN(args)
 
         self.lin = nn.Sequential(
-            nn.Linear(args.hidden_size, args.hidden_size),
+            nn.Linear(3 * args.hidden_size, args.hidden_size),
             nn.PReLU())
         self.mu = nn.Sequential(
             nn.Linear(args.hidden_size, self.args.actions + self.args.objects))
@@ -42,8 +42,8 @@ class Actor(nn.Module):
 
     def forward(self, objects, comm, pred_action, forward_hidden, action_hidden):
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
-        #x = self.obs_in(objects, comm)
-        x = self.lin(forward_hidden)
+        obs = self.obs_in(objects, comm)
+        x = self.lin(torch.cat([obs, forward_hidden], dim = -1))
         mu, std = var(x, self.mu, self.std, self.args)
         x = sample(mu, std, self.args.device)
         action = torch.tanh(x)
