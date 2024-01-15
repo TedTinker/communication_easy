@@ -137,7 +137,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
     # Module 
 parser.add_argument('--hidden_size',        type=int,        default = 32,
                     help='Parameters in hidden layers.')   
-parser.add_argument('--state_size',         type=int,        default = 32,
+parser.add_argument('--state_size',         type=int,        default = 128,
                     help='Parameters in prior and posterior inner-states.')
 parser.add_argument('--time_scales',        type=literal,    default = [1],
                     help='Time-scales for MTRNN.')

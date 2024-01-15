@@ -1,6 +1,7 @@
 #%% 
 
-# To do: Make this work for RL!
+# To do: Make this work for RL's PVRNN!
+# Improve comm in and out.
 
 import torch
 from torch import nn 
@@ -16,11 +17,19 @@ from utils import default_args, args, print, init_weights, Ted_Conv1d, episodes_
 from task import Task
 from mtrnn import MTRNN
 from submodules import Obs_IN, Obs_OUT, Action_IN
+from pvrnn import PVRNN
+from models import Actor, Critic
 
 
 
 args.alpha = .1
 args.delta = 1
+
+actor = Actor(args)
+actor_opt = optim.Adam(actor.parameters(), lr=args.actor_lr) 
+
+critic = Critic(args)
+critic_opt = optim.Adam(critic.parameters(), lr=args.actor_lr) 
 
 
 
@@ -38,8 +47,8 @@ def batch_of_tasks(batch_size = 64):
         objects.append(object)
         comms.append(comm)
         recommended_actions.append(tasks[-1].get_recommended_action())
-    objects = torch.stack(objects, dim = 0)
-    comms = torch.stack(comms, dim = 0)
+    objects = torch.stack(objects, dim = 0).unsqueeze(1)
+    comms = torch.stack(comms, dim = 0).unsqueeze(1)
     recommended_actions = torch.stack(recommended_actions, dim = 0)
     return(tasks, goals, objects, comms, recommended_actions)
         
@@ -56,11 +65,11 @@ def get_rewards(tasks, action):
     
     
 
-#"""
-class Forward(nn.Module): 
+""" This one works, but not the real one?
+class PVRNN(nn.Module): 
     
     def __init__(self, args = default_args):
-        super(Forward, self).__init__()
+        super(PVRNN, self).__init__()
         
         self.args = args
         self.layers = len(args.time_scales)
@@ -70,171 +79,93 @@ class Forward(nn.Module):
             nn.Linear(
                 in_features = 2 * args.hidden_size,
                 out_features = 1 * args.hidden_size))
-        self.prev_action_in = Action_IN(self.args)
+        self.action_in = Action_IN(self.args)
         self.predict_obs = Obs_OUT(args)
         
         self.apply(init_weights)
         self.to(args.device)
     
-    def forward(self, prev_action, objects, comm):
-        obs = self.obs_in(objects, comm)
+    def forward(self, prev_hidden_states, objects, comms, prev_actions):
+        obs = self.obs_in(objects, comms)
         hidden = self.between(obs)
-        prev_action = self.prev_action_in(prev_action)
-        pred_objects, pred_comm = self.predict_obs(torch.cat([prev_action, hidden], dim = -1))
-        return((None, None), (None, None, pred_objects, pred_comm, hidden))
+        prev_actions = self.action_in(prev_actions)
+        pred_objects, pred_comm = self.predict_obs(torch.cat([prev_actions, hidden], dim = -1))
+        return((None, None), (None, None), (pred_objects, pred_comm), hidden.unsqueeze(2))
+    
+"""
 
-""" # This works after removing everything interesting.
-
-class Forward(nn.Module): 
+class PVRNN(nn.Module): 
     
     def __init__(self, args = default_args):
-        super(Forward, self).__init__()
+        super(PVRNN, self).__init__()
         
         self.args = args
-        self.layers = 1 # len(args.time_scales)
+        self.layers = len(args.time_scales)
                 
         self.obs_in = Obs_IN(args)
-        self.action_in = Action_IN(args)
-
+        
+        # Prior: Previous hidden state, plus action if bottom.  
+        self.zp_mu = nn.Sequential(
+                nn.Linear(
+                    in_features = self.args.hidden_size, 
+                    out_features = self.args.state_size), 
+                nn.Tanh())
+        self.zp_std = nn.Sequential(
+                nn.Linear(
+                    in_features = self.args.hidden_size, 
+                    out_features = self.args.state_size), 
+                nn.Softplus())
+                            
+        # Posterior: Previous hidden state, plus observation and action if bottom, plus lower-layer hidden state otherwise.
+        self.zq_mu = nn.Sequential(
+                nn.Linear(
+                    in_features = 3 * self.args.hidden_size, 
+                    out_features = self.args.state_size), 
+                nn.Tanh())
+        self.zq_std = nn.Sequential(
+                nn.Linear(
+                    in_features = 3 * self.args.hidden_size, 
+                    out_features = self.args.state_size), 
+                nn.Softplus())
+        
         self.between = nn.Sequential(
-                nn.Linear(args.hidden_size + (args.hidden_size * 3), args.hidden_size), 
-                nn.PReLU(),
-                nn.Linear(args.hidden_size, args.state_size),
-                nn.PReLU())
-            
+            nn.Linear(
+                in_features = args.state_size,
+                out_features = 1 * args.hidden_size))
+        self.action_in = Action_IN(self.args)
         self.predict_obs = Obs_OUT(args)
         
         self.apply(init_weights)
         self.to(args.device)
     
-    def forward(self, prev_action, objects, comm):
-        if(len(prev_action.shape) == 2): prev_action = prev_action.unsqueeze(1)
-        if(len(objects.shape)   == 2):       objects         = objects.unsqueeze(0)
-        if(len(objects.shape)   == 3):       objects         = objects.unsqueeze(1)
-        if(len(comm.shape)  == 2):       comm        = comm.unsqueeze(0)
-        if(len(comm.shape)  == 3):       comm        = comm.unsqueeze(1)
-        [prev_action, objects, comm] = attach_list([prev_action, objects, comm], self.args.device)
-        episodes, steps = episodes_steps(objects)
-        obs = self.obs_in(objects, comm)
-        prev_action = self.action_in(prev_action)
-        
-        first_hidden = torch.zeros((objects.shape[0], 1, self.args.hidden_size))
-        z_input = torch.cat([first_hidden, obs, prev_action], dim=-1)
-        zq = self.between(z_input)
-        h_w_action = torch.cat([zq, prev_action], dim = -1)
-        pred_objects, pred_comm = self.predict_obs(h_w_action)
-        
-        return(
-            (None, None), 
-            (None, None, pred_objects, pred_comm, zq))
+    def forward(self, prev_hidden_states, objects, comms, prev_actions):
+        obs = self.obs_in(objects, comms)
+        zp_mu, zp_std = var(prev_hidden_states, self.zp_mu, self.zp_std, self.args)
+        zp = sample(zp_mu, zp_std, self.args.device)
+        zq_mu, zq_std = var(torch.cat([obs, prev_hidden_states], dim = -1), self.zq_mu, self.zq_std, self.args)
+        zq = sample(zq_mu, zq_std, self.args.device)
+        hidden = self.between(zq)
+        prev_actions = self.action_in(prev_actions)
+        pred_objects, pred_comm = self.predict_obs(torch.cat([prev_actions, hidden], dim = -1))
+        return((None, None), (None, None), (pred_objects, pred_comm), hidden.unsqueeze(2))
+    
 #"""
     
-    
-forward = Forward(args)
+forward = PVRNN(args)
 forward_opt = optim.Adam(forward.parameters(), lr=args.actor_lr) 
     
 print(forward)
 print()
 print(torch_summary(forward, 
-                    ((1, 1, args.action_shape),
+                    ((1, args.layers, args.hidden_size),
                      (1, 1, args.objects, args.shapes + args.colors), 
-                     (1, 1, args.max_comm_len, args.comm_shape))))
-
-
-
-class Actor(nn.Module):
-
-    def __init__(self, args = default_args):
-        super(Actor, self).__init__()
-        
-        self.args = args
-        
-        self.obs_in = Obs_IN(args)
-
-        self.lin = nn.Sequential(
-            nn.Linear(args.hidden_size, args.hidden_size),
-            nn.PReLU())
-        self.mu = nn.Sequential(
-            nn.Linear(args.hidden_size, self.args.actions + self.args.objects))
-        self.std = nn.Sequential(
-            nn.Linear(args.hidden_size, self.args.actions + self.args.objects),
-            nn.Softplus())
-
-        self.apply(init_weights)
-        self.to(args.device)
-
-    def forward(self, objects, comm, pred_action, forward_hidden, action_hidden):
-        if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
-        #x = self.obs_in(objects, comm)
-        x = self.lin(forward_hidden)
-        mu, std = var(x, self.mu, self.std, self.args)
-        x = sample(mu, std, self.args.device)
-        action = torch.tanh(x)
-        log_prob = Normal(mu, std).log_prob(x) - torch.log(1 - action.pow(2) + 1e-6)
-        log_prob = torch.mean(log_prob, -1).unsqueeze(-1)
-        return action, log_prob, None
-    
-
-
-actor = Actor(args)
-actor_opt = optim.Adam(actor.parameters(), lr=args.actor_lr) 
-    
-print(actor)
-print()
-print(torch_summary(actor, 
-                    ((1, args.objects, args.shapes + args.colors), 
-                     (1, args.max_comm_len, args.comm_shape),
-                     (1, args.action_shape),
-                     (1, args.hidden_size),
-                     (1, 1))))
-
-
-
-class Critic(nn.Module): 
-    
-    def __init__(self, args = default_args):
-        super(Critic, self).__init__()
-        
-        self.args = args
-        
-        self.obs_in = Obs_IN(self.args)
-        
-        self.action_in = Action_IN(self.args)
-        
-        self.value = nn.Sequential(
-            nn.Linear(
-                in_features = 4 * self.args.hidden_size,
-                out_features = self.args.hidden_size),
-            nn.PReLU(),
-            nn.Linear(                
-                in_features = self.args.hidden_size,
-                out_features = 1))
-        
-    def forward(self, objects, comm, action, forward_hidden, critic_hidden):
-        if(len(action.shape) == 2): action = action.unsqueeze(1)
-        if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
-        obs = self.obs_in(objects, comm)
-        action = self.action_in(action)
-        value = self.value(torch.cat([obs, action, forward_hidden], dim=-1))
-        return(value, None)
-
-
-
-critic = Critic(args)
-critic_opt = optim.Adam(critic.parameters(), lr=args.actor_lr) 
-    
-print(critic)
-print()
-print(torch_summary(critic, 
-                    ((1, args.objects, args.shapes + args.colors), 
-                     (1, args.max_comm_len, args.comm_shape),
-                     (1, args.action_shape),
-                     (1, args.hidden_size),
-                     (1, 1))))
+                     (1, 1, args.max_comm_len, args.comm_shape),
+                     (1, 1, args.action_shape))))
 
 
 
 prev_action = torch.zeros((64, 1, args.action_shape))
+prev_hidden_states = torch.zeros((64, args.layers, args.hidden_size))
 
 
 
@@ -242,9 +173,9 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train forward
     tasks, goals, real_objects, real_comm, recommended_actions = batch_of_tasks(batch_size)
-    (_, _), (_, _, pred_objects, pred_comm, forward_hidden) = forward(prev_action, real_objects, real_comm)
-    pred_objects = pred_objects.squeeze(1)
-    pred_comm = pred_comm.squeeze(1)
+    (_, _), (_, _), (pred_objects, pred_comm), _ = forward(prev_hidden_states, real_objects, real_comm, prev_action)
+    real_comm = real_comm.reshape((real_comm.shape[0] * real_comm.shape[1], real_comm.shape[2], real_comm.shape[3]))
+    pred_comm = pred_comm.reshape((pred_comm.shape[0] * pred_comm.shape[1], pred_comm.shape[2], pred_comm.shape[3]))
     object_loss = F.binary_cross_entropy(pred_objects, real_objects)
     comm_loss = F.cross_entropy(pred_comm, real_comm)
     forward_loss = object_loss + comm_loss
@@ -254,10 +185,10 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train critic
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
-    (_, _), (_, _, pred_objects, pred_comm, forward_hidden) = forward(prev_action, objects, comm)
-    actions, log_prob, _ = actor(objects, comm, None, forward_hidden, None)
+    (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comm, prev_action)
+    actions, log_prob, _ = actor(objects, comm, None, forward_hidden.squeeze(2), None)
     crit_rewards, wins = get_rewards(tasks, actions)
-    crit_values, _ = critic(objects, comm, actions, forward_hidden, None)
+    crit_values, _ = critic(objects, comm, actions, forward_hidden.squeeze(2), None)
     crit_values = crit_values.squeeze(1)
     critic_loss = 0.5*F.mse_loss(crit_values, crit_rewards)
     critic_opt.zero_grad()
@@ -266,11 +197,11 @@ def epoch(batch_size = 64, verbose = False):
     
     # Train actor
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
-    (_, _), (_, _, pred_objects, pred_comm, forward_hidden) = forward(prev_action, objects, comm)
-    actions, log_prob, _ = actor(objects, comm, None, forward_hidden, None)
+    (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comm, prev_action)
+    actions, log_prob, _ = actor(objects, comm, None, forward_hidden.squeeze(2), None)
     log_prob = log_prob.squeeze(1)
     rewards, wins = get_rewards(tasks, actions)
-    values, _ = critic(objects, comm, actions, forward_hidden, None)
+    values, _ = critic(objects, comm, actions, forward_hidden.squeeze(2), None)
     values = values.squeeze(1)
     entropy_value = args.alpha * log_prob
     recommendation_value = args.delta * calculate_similarity(recommended_actions.unsqueeze(1), actions)
@@ -290,14 +221,14 @@ def epoch(batch_size = 64, verbose = False):
         print("PRED COMM:")
         print(pred_comm[0])
         
-        print("\nREWARDS:")
+        print("\nREWARD:")
         print(rewards[0])
-        print("VALUES:")
+        print("VALUE:")
         print(values[0])
         
         print("\nTASK:")
         print(tasks[0])
-        print("ACTIONS:")
+        print("ACTION:")
         print(actions[0])
         print("ENTROPY REWARD:")
         print(entropy_value[0])
