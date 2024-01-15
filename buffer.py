@@ -36,7 +36,7 @@ class RecurrentReplayBuffer:
             before_and_after = True, 
             args = self.args)
         self.communications = VariableBuffer(
-            shape = (self.args.max_comm_len, self.args.communication_shape,), 
+            shape = (self.args.max_comm_len, self.args.comm_shape,), 
             before_and_after = True, 
             args = self.args)
         self.actions = VariableBuffer(

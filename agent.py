@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 from utils import default_args, dkl, print, choose_task, calculate_similarity
 from task import Task, Task_Runner
 from buffer import RecurrentReplayBuffer
-from models import Forward, Actor, Critic
+from pvrnn import PVRNN
+from models import Actor, Critic
 
 
 
@@ -36,7 +37,7 @@ class Agent:
         self.log_alpha = torch.tensor([0.0], requires_grad=True)
         self.alpha_opt = optim.Adam(params=[self.log_alpha], lr=self.args.alpha_lr) 
 
-        self.forward = Forward(self.args)
+        self.forward = PVRNN(self.args)
         self.forward_opt = optim.Adam(self.forward.parameters(), lr=self.args.forward_lr)
                            
         self.actor = Actor(self.args)
@@ -58,13 +59,13 @@ class Agent:
         self.plot_dict = {
             "args" : self.args,
             "pred_lists" : {}, "pos_lists" : {}, 
-            "agent_lists" : {"forward" : Forward, "actor" : Actor, "critic" : Critic},
+            "agent_lists" : {"forward" : PVRNN, "actor" : Actor, "critic" : Critic},
             "wins" : [], "rewards" : [], "spot_names" : [], "steps" : [],
             "accuracy" : [], "complexity" : [],
             "alpha" : [], "actor" : [], 
             "critic_1" : [], "critic_2" : [], 
             "extrinsic" : [], "intrinsic_curiosity" : [], 
-            "intrinsic_entropy" : [], 
+            "intrinsic_entropy" : [], "intrinsic_imitation" : [],
             "prediction_error" : [], "hidden_state" : [[] for _ in range(self.args.layers)]}
         
         
@@ -112,7 +113,8 @@ class Agent:
         # Third Column
         ax = axs[2]
         ax.plot([actor_loss for actor_loss in self.plot_dict["actor"] if actor_loss != None])
-        ax.plot([alpha_loss for alpha_loss in self.plot_dict["alpha"] if alpha_loss != None])
+        ax.plot([alpha_loss for alpha_loss in self.plot_dict["intrinsic_entropy"] if alpha_loss != None])
+        ax.plot([delta_loss for delta_loss in self.plot_dict["intrinsic_imitation"] if delta_loss != None])
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Actor")
@@ -134,8 +136,8 @@ class Agent:
         with torch.no_grad():
             obj, comm = self.task.obs()
             recommended_action = self.task.task.get_recommended_action()
-            _, _, hp = self.forward.p(prev_action, hq_m1)
-            _, _, hq = self.forward.q(prev_action, obj, comm, hq_m1)
+            (_, _), (_, _), hq = self.forward.bottom_to_top_step(hq_m1, obj, comm, prev_action) 
+            hq = hq.squeeze(1)
             action, _, ha = self.actor(obj, comm, prev_action, hq[0].clone().detach(), ha_m1) 
             reward, done, win = self.task.action(action, verbose)
             next_obj, next_comm = self.task.obs()
@@ -150,14 +152,15 @@ class Agent:
                     next_comm, 
                     done)
         torch.cuda.empty_cache()
-        return(action, hp, hq, ha, reward, done, win)
+        return(action, hq, ha, reward, done, win)
             
            
     
     def training_episode(self, push = True, verbose = False):
         done = False ; steps = 0
         prev_action = torch.zeros((1, 1, self.args.action_shape))
-        hq = None ; ha = None
+        hq = torch.zeros((1, self.args.layers, self.args.hidden_size)) 
+        ha = torch.zeros((1, 1, self.args.hidden_size)) 
         
         selected_task = choose_task(self.task_probabilities)
         self.task = self.task_runners[selected_task]
@@ -168,12 +171,12 @@ class Agent:
             self.steps += 1 
             if(not done):
                 steps += 1
-                prev_action, hp, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push, verbose)
+                prev_action, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push, verbose)
             if(self.steps % self.args.steps_per_epoch == 0):
                 plot_data = self.epoch(self.args.batch_size, verbose)
                 if(plot_data == False): pass
                 else:
-                    l, e, ic, ie, prediction_error, hidden_state = plot_data
+                    l, e, ic, ie, ii, prediction_error, hidden_state = plot_data
                     if(self.epochs == 1 or self.epochs >= sum(self.args.epochs) or self.epochs % self.args.keep_data == 0):
                         self.plot_dict["accuracy"].append(l[0][0])
                         self.plot_dict["complexity"].append(l[0][1])
@@ -184,6 +187,7 @@ class Agent:
                         self.plot_dict["extrinsic"].append(e)
                         self.plot_dict["intrinsic_curiosity"].append(ic)
                         self.plot_dict["intrinsic_entropy"].append(ie)
+                        self.plot_dict["intrinsic_imitation"].append(ii)
                         self.plot_dict["prediction_error"].append(prediction_error)
                         for layer, f in enumerate(hidden_state):
                             self.plot_dict["hidden_state"][layer].append(f)    
@@ -222,36 +226,36 @@ class Agent:
                 
         
         # Train forward
-        (zp_mu_list, zp_std_list), \
-        (zq_mu_list, zq_std_list, pred_objects, pred_comms, hq_lists) = self.forward(actions, objects, comms)
-        hqs = hq_lists[0]
+        (zp_mu, zp_std), (zq_mu, zq_std), (pred_objects, pred_comms), hqs = self.forward(torch.zeros((episodes, self.args.layers, self.args.hidden_size)), objects, comms, actions)
+        hqs = hqs[:,:,0]
         
-        object_loss   = F.binary_cross_entropy(pred_objects, objects[:,1:], reduction = "none")
-        object_loss = object_loss.reshape((episodes, steps, self.args.objects * (self.args.shapes + self.args.colors)))
-        object_loss = object_loss.mean(-1).unsqueeze(-1) * masks
+        object_loss   = F.binary_cross_entropy(pred_objects, objects, reduction = "none")
+        object_loss = object_loss.reshape((episodes, steps+1, self.args.objects * (self.args.shapes + self.args.colors)))
+        object_loss = object_loss.mean(-1).unsqueeze(-1) * all_masks
         
         if(verbose):
             print("Objects:", objects[0,1])
             print("Prediciton:", pred_objects[0,0])
         
-        pred_comm = pred_comms.reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
-        target_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
+        pred_comm = pred_comms.reshape((episodes * (steps+1) * self.args.max_comm_len, self.args.comm_shape))
+        target_comms = comms.reshape((episodes * (steps+1) * self.args.max_comm_len, self.args.comm_shape))
         target_comms = torch.argmax(target_comms, dim=-1)
         comm_loss = F.cross_entropy(pred_comm, target_comms, reduction = "none")
-        comm_loss = comm_loss.reshape((episodes, steps, self.args.max_comm_len))
-        comm_loss = comm_loss.mean(-1).unsqueeze(-1) * masks
+        comm_loss = comm_loss.reshape((episodes, steps+1, self.args.max_comm_len))
+        comm_loss = comm_loss.mean(-1).unsqueeze(-1) * all_masks
         
-        if(verbose):
-            print("comm:", comms[0,1])
-            print("Prediciton:", pred_comm.reshape((episodes, steps, self.args.max_comm_len, self.args.comm_shape))[0,0])
+        #if(verbose):
+        #    print("comm:", comms[0,1])
+        #    print("Prediciton:", pred_comm.reshape((episodes, steps+1, self.args.max_comm_len, self.args.comm_shape))[0,0])
         
         accuracy_for_prediction_error = object_loss + comm_loss
         accuracy           = accuracy_for_prediction_error.mean()
+        accuracy_for_prediction_error = accuracy_for_prediction_error[:,1:]
         
-        complexity_for_hidden_state = [dkl(zq_mu, zq_std, zp_mu, zp_std).mean(-1).unsqueeze(-1) * all_masks for (zq_mu, zq_std, zp_mu, zp_std) in zip(zq_mu_list, zq_std_list, zp_mu_list, zp_std_list)]
+        complexity_for_hidden_state = [dkl(zq_mu[:,:,layer], zq_std[:,:,layer], zp_mu[:,:,layer], zp_std[:,:,layer]).mean(-1).unsqueeze(-1) * all_masks for layer in range(self.args.layers)] 
         complexity          = sum([self.args.beta[layer] * complexity_for_hidden_state[layer].mean() for layer in range(self.args.layers)])       
         complexity_for_hidden_state = [layer[:,1:] for layer in complexity_for_hidden_state] 
-                        
+                                
         self.forward_opt.zero_grad()
         (accuracy + complexity).backward()
         self.forward_opt.step()
@@ -301,7 +305,7 @@ class Agent:
         
         if(verbose):
             print("Rewards:", rewards[0,0])
-            print("Prediciton:", Q_1[0,0])
+            print("Predictions:", Q_1[0,0], Q_2[0,0])
         
         self.soft_update(self.critic1, self.critic1_target, self.args.tau)
         self.soft_update(self.critic2, self.critic2_target, self.args.tau)
@@ -341,9 +345,9 @@ class Agent:
             Q_2, _ = self.critic2(objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
             Q = torch.min(Q_1, Q_2).mean(-1).unsqueeze(-1)
             intrinsic_entropy = torch.mean((alpha * log_pis)*masks).item()
-            actor_loss = (alpha * log_pis - policy_prior_log_prrgbd - Q)*masks
-            recommendation_value = self.args.delta * calculate_similarity(recommended_actions, new_actions)
-            actor_loss += recommendation_value.unsqueeze(-1)
+            recommendation_value = calculate_similarity(recommended_actions, new_actions).unsqueeze(-1)
+            intrinsic_imitation = -torch.mean((self.args.delta * recommendation_value)*masks).item() 
+            actor_loss = (alpha * log_pis - policy_prior_log_prrgbd - self.args.delta * recommendation_value - Q)*masks
             actor_loss = actor_loss.mean() / masks.mean()
 
             self.actor_opt.zero_grad()
@@ -352,6 +356,7 @@ class Agent:
             
         else:
             intrinsic_entropy = None
+            intrinsic_imitation = None
             actor_loss = None
                                 
                                 
@@ -372,7 +377,7 @@ class Agent:
         hidden_state_curiosities = [hidden_state_curiosity.mean().item() for hidden_state_curiosity in hidden_state_curiosities]
         hidden_state_curiosities = [hidden_state_curiosity for hidden_state_curiosity in hidden_state_curiosities]
         
-        return(losses, extrinsic, intrinsic_curiosity, intrinsic_entropy, prediction_error_curiosity, hidden_state_curiosities)
+        return(losses, extrinsic, intrinsic_curiosity, intrinsic_entropy, intrinsic_imitation, prediction_error_curiosity, hidden_state_curiosities)
     
     
                      

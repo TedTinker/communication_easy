@@ -31,6 +31,9 @@ actor_opt = optim.Adam(actor.parameters(), lr=args.actor_lr)
 critic = Critic(args)
 critic_opt = optim.Adam(critic.parameters(), lr=args.actor_lr) 
 
+forward = PVRNN(args)
+forward_opt = optim.Adam(forward.parameters(), lr=args.actor_lr) 
+
 
 
 def batch_of_tasks(batch_size = 64):
@@ -62,107 +65,6 @@ def get_rewards(tasks, action):
         wins.append(win)
     rewards = torch.tensor(rewards).float().unsqueeze(-1)
     return(rewards, wins)
-    
-    
-
-""" This one works, but not the real one?
-class PVRNN(nn.Module): 
-    
-    def __init__(self, args = default_args):
-        super(PVRNN, self).__init__()
-        
-        self.args = args
-        self.layers = len(args.time_scales)
-                
-        self.obs_in = Obs_IN(args)
-        self.between = nn.Sequential(
-            nn.Linear(
-                in_features = 2 * args.hidden_size,
-                out_features = 1 * args.hidden_size))
-        self.action_in = Action_IN(self.args)
-        self.predict_obs = Obs_OUT(args)
-        
-        self.apply(init_weights)
-        self.to(args.device)
-    
-    def forward(self, prev_hidden_states, objects, comms, prev_actions):
-        obs = self.obs_in(objects, comms)
-        hidden = self.between(obs)
-        prev_actions = self.action_in(prev_actions)
-        pred_objects, pred_comm = self.predict_obs(torch.cat([prev_actions, hidden], dim = -1))
-        return((None, None), (None, None), (pred_objects, pred_comm), hidden.unsqueeze(2))
-    
-"""
-
-class PVRNN(nn.Module): 
-    
-    def __init__(self, args = default_args):
-        super(PVRNN, self).__init__()
-        
-        self.args = args
-        self.layers = len(args.time_scales)
-                
-        self.obs_in = Obs_IN(args)
-        
-        # Prior: Previous hidden state, plus action if bottom.  
-        self.zp_mu = nn.Sequential(
-                nn.Linear(
-                    in_features = self.args.hidden_size, 
-                    out_features = self.args.state_size), 
-                nn.Tanh())
-        self.zp_std = nn.Sequential(
-                nn.Linear(
-                    in_features = self.args.hidden_size, 
-                    out_features = self.args.state_size), 
-                nn.Softplus())
-                            
-        # Posterior: Previous hidden state, plus observation and action if bottom, plus lower-layer hidden state otherwise.
-        self.zq_mu = nn.Sequential(
-                nn.Linear(
-                    in_features = 3 * self.args.hidden_size, 
-                    out_features = self.args.state_size), 
-                nn.Tanh())
-        self.zq_std = nn.Sequential(
-                nn.Linear(
-                    in_features = 3 * self.args.hidden_size, 
-                    out_features = self.args.state_size), 
-                nn.Softplus())
-        
-        self.between = nn.Sequential(
-            nn.Linear(
-                in_features = args.state_size,
-                out_features = 1 * args.hidden_size))
-        self.action_in = Action_IN(self.args)
-        self.predict_obs = Obs_OUT(args)
-        
-        self.apply(init_weights)
-        self.to(args.device)
-    
-    def forward(self, prev_hidden_states, objects, comms, prev_actions):
-        obs = self.obs_in(objects, comms)
-        zp_mu, zp_std = var(prev_hidden_states, self.zp_mu, self.zp_std, self.args)
-        zp = sample(zp_mu, zp_std, self.args.device)
-        zq_mu, zq_std = var(torch.cat([obs, prev_hidden_states], dim = -1), self.zq_mu, self.zq_std, self.args)
-        zq = sample(zq_mu, zq_std, self.args.device)
-        hidden = self.between(zq)
-        prev_actions = self.action_in(prev_actions)
-        pred_objects, pred_comm = self.predict_obs(torch.cat([prev_actions, hidden], dim = -1))
-        return((None, None), (None, None), (pred_objects, pred_comm), hidden.unsqueeze(2))
-    
-#"""
-    
-forward = PVRNN(args)
-forward_opt = optim.Adam(forward.parameters(), lr=args.actor_lr) 
-    
-print(forward)
-print()
-print(torch_summary(forward, 
-                    ((1, args.layers, args.hidden_size),
-                     (1, 1, args.objects, args.shapes + args.colors), 
-                     (1, 1, args.max_comm_len, args.comm_shape),
-                     (1, 1, args.action_shape))))
-
-
 
 prev_action = torch.zeros((64, 1, args.action_shape))
 prev_hidden_states = torch.zeros((64, args.layers, args.hidden_size))
@@ -236,20 +138,24 @@ def epoch(batch_size = 64, verbose = False):
         print(recommendation_value[0])
         print("WIN?", wins[0])
         
-    return(wins, forward_loss.detach(), actor_loss.detach(), critic_loss.detach())
+    return(wins, forward_loss.detach(), actor_loss.detach(), entropy_value.mean().item(), -recommendation_value.mean().item(), critic_loss.detach())
 
 
 
 wins = []
 forward_losses = []
 actor_losses = []
+entropy_values = []
+recommendation_values = []
 critic_losses = []
 for e in range(100000):
     print("EPOCH", e, end = ", ")
-    win, forward_loss, actor_loss, critic_loss = epoch(verbose = e % 100 == 0)
+    win, forward_loss, actor_loss, entropy_value, recommendation_value, critic_loss = epoch(verbose = e % 100 == 0)
     wins += win
     forward_losses.append(forward_loss)
     actor_losses.append(actor_loss)
+    entropy_values.append(entropy_value)
+    recommendation_values.append(recommendation_value)
     critic_losses.append(critic_loss)
     if(e % 100 == 0):
         columns = 4
@@ -276,6 +182,8 @@ for e in range(100000):
         ax_num += 1
         ax = axs[ax_num]
         ax.plot(actor_losses)
+        ax.plot(entropy_values)
+        ax.plot(recommendation_values)
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Actor")

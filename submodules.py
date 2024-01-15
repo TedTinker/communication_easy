@@ -42,7 +42,7 @@ class Objects_IN(nn.Module):
         self.to(self.args.device)
         
     def forward(self, objects):
-        if(len(objects.shape) == 2):   objects  = objects.unsqueeze(1)
+        if(len(objects.shape) == 2):   objects  = objects.unsqueeze(0)
         if(len(objects.shape) == 3):   objects  = objects.unsqueeze(1)
         episodes, steps = episodes_steps(objects)
         objects = self.objects_lin(objects)
