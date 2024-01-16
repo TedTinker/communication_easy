@@ -13,11 +13,14 @@ import matplotlib.pyplot as plt
 
 from utils import args, print, \
     calculate_similarity, onehots_to_string
-from task import Task
+from task import Task, Task_Runner
 from pvrnn import PVRNN
 from models import Actor, Critic
 
 
+
+episodes = 64 
+steps = 3 
 
 args.alpha = .1
 args.delta = 1
@@ -34,20 +37,21 @@ forward_opt = optim.Adam(forward.parameters(), lr=args.actor_lr)
 
 
 
-def batch_of_tasks(batch_size = 64):
+def batch_of_tasks():
     tasks = []
     goals = []
     objects = []
     comms = []
     recommended_actions = []
-    for _ in range(batch_size):
-        tasks.append(Task(actions = 5, objects = 3, shapes = 5, colors = 6, args = args))
+    for _ in range(episodes):
+        task = Task(actions = 5, objects = 3, shapes = 5, colors = 6, args = args)
+        tasks.append(Task_Runner(task, args = args))
         tasks[-1].begin()
-        goals.append(tasks[-1].goal)
-        object, comm = tasks[-1].give_observation()
+        goals.append(tasks[-1].task.goal)
+        object, comm = tasks[-1].obs()
         objects.append(object)
         comms.append(comm)
-        recommended_actions.append(tasks[-1].get_recommended_action())
+        recommended_actions.append(tasks[-1].task.get_recommended_action())
     objects = torch.stack(objects, dim = 0).unsqueeze(1)
     comms = torch.stack(comms, dim = 0).unsqueeze(1)
     recommended_actions = torch.stack(recommended_actions, dim = 0)
@@ -55,27 +59,58 @@ def batch_of_tasks(batch_size = 64):
         
 def get_rewards(tasks, action):
     rewards = []
+    dones = []
     wins = []
     for i in range(len(tasks)):
-        reward, win = tasks[i].reward_for_action(action[i])
+        reward, done, win = tasks[i].action(action[i])
         if(reward != 4): reward -= 1
         rewards.append(reward)
+        dones.append(done)
         wins.append(win)
-    rewards = torch.tensor(rewards).float().unsqueeze(-1)
-    return(rewards, wins)
+    rewards = torch.tensor(rewards).float().unsqueeze(1).unsqueeze(1)
+    return(rewards, dones, wins)
+
+def step_in_episode(tasks, prev_action, hq_m1, ha_m1, objects, comms):
+    (_, _), (_, _), hq = forward.bottom_to_top_step(hq_m1, objects, comms, prev_action) 
+    action, _, ha = actor(objects, comms, prev_action, hq[:,:,0].clone().detach(), ha_m1) 
+    rewards, dones, wins = get_rewards(tasks, action)
+    return(action, hq.squeeze(1), ha, rewards, dones, wins)
+
+def episode(tasks, objects, comms):
+    hq = torch.zeros((episodes, args.layers, args.hidden_size))
+    ha = None
+    actions = []
+    rewards = []
+    action = prev_action
+    for step in range(steps):
+        action, hq, ha, reward, dones, wins = \
+            step_in_episode(tasks, action, hq, ha, objects, comms)
+        actions.append(action)
+        rewards.append(reward)
+    actions = torch.cat(actions, dim = 1)
+    actions = torch.cat([prev_action, actions], dim = 1)
+    rewards = torch.cat(rewards, dim = 1)
+    return(actions, hq, rewards, dones, wins)
+
+
 
 prev_action = torch.zeros((64, 1, args.action_shape))
 prev_hidden_states = torch.zeros((64, args.layers, args.hidden_size))
 
 
 
-def epoch(batch_size = 64, verbose = False):
+def epoch(verbose = False):
+    
+    tasks, goals, objects, comms, recommended_actions = batch_of_tasks()
+    actions, hq, rewards, dones, wins = episode(tasks, objects, comms)
+    objects = objects.tile((1, steps+1, 1, 1))
+    comms = comms.tile((1, steps+1, 1, 1))
+    (_, _), (_, _), (pred_objects, pred_comm), _ = forward(prev_hidden_states, objects, comms, actions)
     
     # Train forward
-    tasks, goals, real_objects, real_comm, recommended_actions = batch_of_tasks(batch_size)
+    tasks, goals, real_objects, real_comm, recommended_actions = batch_of_tasks()
     (_, _), (_, _), (pred_objects, pred_comm), _ = forward(prev_hidden_states, real_objects, real_comm, prev_action)
     
-    # Weird. Using one of these makes comm prediction perfect, but won't help the actor!
     target_comm = real_comm.reshape((real_comm.shape[0] * real_comm.shape[1] * real_comm.shape[2], real_comm.shape[3]))
     target_comm = torch.argmax(target_comm, dim = -1)
     predicted_comm = pred_comm.reshape((pred_comm.shape[0] * pred_comm.shape[1] * pred_comm.shape[2], pred_comm.shape[3]))
@@ -91,11 +126,11 @@ def epoch(batch_size = 64, verbose = False):
     forward_opt.step()
     
     # Train critic
-    tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
+    tasks, goals, objects, comm, recommended_actions = batch_of_tasks()
     (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comm, prev_action)
     #print(objects.shape, comm.shape, forward_hidden.shape)
     actions, log_prob, _ = actor(objects, comm, None, forward_hidden[:,:,0], None)
-    crit_rewards, wins = get_rewards(tasks, actions)
+    crit_rewards, dones, wins = get_rewards(tasks, actions)
     crit_values, _ = critic(objects, comm, actions, forward_hidden[:,:,0], None)
     crit_values = crit_values.squeeze(1)
     critic_loss = 0.5*F.mse_loss(crit_values, crit_rewards)
@@ -104,11 +139,11 @@ def epoch(batch_size = 64, verbose = False):
     critic_opt.step()
     
     # Train actor
-    tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
+    tasks, goals, objects, comm, recommended_actions = batch_of_tasks()
     (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comm, prev_action)
     actions, log_prob, _ = actor(objects, comm, None, forward_hidden[:,:,0], None)
     log_prob = log_prob.squeeze(1)
-    rewards, wins = get_rewards(tasks, actions)
+    rewards, dones, wins = get_rewards(tasks, actions)
     values, _ = critic(objects, comm, actions, forward_hidden[:,:,0], None)
     values = values.squeeze(1)
     entropy_value = args.alpha * log_prob
@@ -134,7 +169,7 @@ def epoch(batch_size = 64, verbose = False):
         print(values[0])
         
         print("\nTASK:")
-        print(tasks[0])
+        print(tasks[0].task)
         print("ACTION:")
         print(actions[0])
         print("ENTROPY REWARD:")

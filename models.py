@@ -40,7 +40,7 @@ class Actor(nn.Module):
         self.apply(init_weights)
         self.to(args.device)
 
-    def forward(self, objects, comm, pred_action, forward_hidden, action_hidden):
+    def forward(self, objects, comm, prev_action, forward_hidden, action_hidden):
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
         obs = self.obs_in(objects, comm)
         x = self.lin(torch.cat([obs, forward_hidden], dim = -1))
