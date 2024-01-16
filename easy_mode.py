@@ -1,24 +1,19 @@
 #%% 
 
 # To do: 
-# Improve comm in and out.
+# Improve comm in.
 
 import torch
-from torch import nn 
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributions import Normal
 from torchinfo import summary as torch_summary
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-from utils import default_args, args, print, init_weights, Ted_Conv1d, \
-    episodes_steps, pad_zeros, select_actions_objects, multi_hot_action, \
-        var, sample, attach_list, calculate_similarity, onehots_to_string
+from utils import args, print, \
+    calculate_similarity, onehots_to_string
 from task import Task
-from mtrnn import MTRNN
-from submodules import Obs_IN, Obs_OUT, Action_IN
 from pvrnn import PVRNN
 from models import Actor, Critic
 
@@ -26,6 +21,7 @@ from models import Actor, Critic
 
 args.alpha = .1
 args.delta = 1
+
 
 actor = Actor(args)
 actor_opt = optim.Adam(actor.parameters(), lr=args.actor_lr) 
@@ -97,9 +93,10 @@ def epoch(batch_size = 64, verbose = False):
     # Train critic
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
     (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comm, prev_action)
-    actions, log_prob, _ = actor(objects, comm, None, forward_hidden.squeeze(2), None)
+    #print(objects.shape, comm.shape, forward_hidden.shape)
+    actions, log_prob, _ = actor(objects, comm, None, forward_hidden[:,:,0], None)
     crit_rewards, wins = get_rewards(tasks, actions)
-    crit_values, _ = critic(objects, comm, actions, forward_hidden.squeeze(2), None)
+    crit_values, _ = critic(objects, comm, actions, forward_hidden[:,:,0], None)
     crit_values = crit_values.squeeze(1)
     critic_loss = 0.5*F.mse_loss(crit_values, crit_rewards)
     critic_opt.zero_grad()
@@ -109,10 +106,10 @@ def epoch(batch_size = 64, verbose = False):
     # Train actor
     tasks, goals, objects, comm, recommended_actions = batch_of_tasks(batch_size)
     (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comm, prev_action)
-    actions, log_prob, _ = actor(objects, comm, None, forward_hidden.squeeze(2), None)
+    actions, log_prob, _ = actor(objects, comm, None, forward_hidden[:,:,0], None)
     log_prob = log_prob.squeeze(1)
     rewards, wins = get_rewards(tasks, actions)
-    values, _ = critic(objects, comm, actions, forward_hidden.squeeze(2), None)
+    values, _ = critic(objects, comm, actions, forward_hidden[:,:,0], None)
     values = values.squeeze(1)
     entropy_value = args.alpha * log_prob
     recommendation_value = args.delta * calculate_similarity(recommended_actions.unsqueeze(1), actions)

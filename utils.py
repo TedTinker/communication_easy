@@ -109,7 +109,7 @@ parser.add_argument('--capacity',           type=int,        default = 250,
 parser.add_argument('--task_probabilities', type=literal,    default = [
     (("1", 1),)],
                     help='List of probabilities of tasks. Agent trains on each set of tasks based on epochs in epochs parameter.')
-parser.add_argument('--max_steps',          type=int,        default = 1,
+parser.add_argument('--max_steps',          type=int,        default = 3,
                     help='How many steps the agent can make in one episode.')
 parser.add_argument('--step_lim_punishment',type=float,      default = -1,
                     help='Extrinsic punishment for taking max_steps steps.')

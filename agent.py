@@ -137,8 +137,7 @@ class Agent:
             obj, comm = self.task.obs()
             recommended_action = self.task.task.get_recommended_action()
             (_, _), (_, _), hq = self.forward.bottom_to_top_step(hq_m1, obj, comm, prev_action) 
-            hq = hq.squeeze(1)
-            action, _, ha = self.actor(obj, comm, prev_action, hq[0].clone().detach(), ha_m1) 
+            action, _, ha = self.actor(obj, comm, prev_action, hq[:,:,0].clone().detach(), ha_m1) 
             reward, done, win = self.task.action(action, verbose)
             next_obj, next_comm = self.task.obs()
             if(push): 
@@ -152,7 +151,7 @@ class Agent:
                     next_comm, 
                     done)
         torch.cuda.empty_cache()
-        return(action, hq, ha, reward, done, win)
+        return(action, hq.squeeze(1), ha, reward, done, win)
             
            
     
@@ -219,8 +218,8 @@ class Agent:
         steps = rewards.shape[1]
         
         #print("\n\n")
-        #print("objects: {}. comms: {}. actions: {}. rewards: {}. dones: {}. masks: {}.".format(
-        #    objects.shape, comms.shape, actions.shape, rewards.shape, dones.shape, masks.shape))
+        #print("objects: {}. comms: {}. actions: {}. recommended actions: {}. rewards: {}. dones: {}. masks: {}.".format(
+        #    objects.shape, comms.shape, actions.shape, recommended_actions.shape, rewards.shape, dones.shape, masks.shape))
         #print("\n\n")
         
                 
@@ -231,10 +230,10 @@ class Agent:
         
         object_loss   = F.binary_cross_entropy(pred_objects, objects[:,1:], reduction = "none")
         object_loss = object_loss.reshape((episodes, steps, self.args.objects * (self.args.shapes + self.args.colors)))
-        object_loss = object_loss.mean(-1).unsqueeze(-1) * all_masks
+        object_loss = object_loss.mean(-1).unsqueeze(-1) * masks
         
         if(verbose):
-            print("Objects:", objects[0,1])
+            print("\nObjects:", objects[0,1])
             print("Prediciton:", pred_objects[0,0])
         
         real_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
@@ -243,10 +242,10 @@ class Agent:
     
         comm_loss = F.cross_entropy(pred_comms, real_comms, reduction = "none")
         comm_loss = comm_loss.reshape((episodes, steps, self.args.max_comm_len))
-        comm_loss = comm_loss.mean(-1).unsqueeze(-1) * all_masks
+        comm_loss = comm_loss.mean(-1).unsqueeze(-1) * masks
         
         if(verbose):
-            print("Real comm:", onehots_to_string(comms[0,1]))
+            print("\nReal comm:", onehots_to_string(comms[0,1]))
             print("Pred comm:", onehots_to_string(pred_comms.reshape((episodes, steps, self.args.max_comm_len, self.args.comm_shape))[0,0]))
         
         accuracy_for_prediction_error = object_loss + self.args.comm_scaler * comm_loss
@@ -304,7 +303,7 @@ class Agent:
         self.critic2_opt.step()
         
         if(verbose):
-            print("Rewards:", rewards[0,0])
+            print("\nRewards:", rewards[0,0])
             print("Predictions:", Q_1[0,0], Q_2[0,0])
         
         self.soft_update(self.critic1, self.critic1_target, self.args.tau)
@@ -347,6 +346,10 @@ class Agent:
             intrinsic_entropy = torch.mean((alpha * log_pis)*masks).item()
             recommendation_value = calculate_similarity(recommended_actions, new_actions).unsqueeze(-1)
             intrinsic_imitation = -torch.mean((self.args.delta * recommendation_value)*masks).item() 
+            if(verbose):
+                print("\nQ:", -Q[0,0])
+                print("ENTROPY:", alpha * log_pis[0,0])
+                print("RECOMMENDED VALUE:", -self.args.delta * recommendation_value[0,0])
             actor_loss = (alpha * log_pis - policy_prior_log_prrgbd - self.args.delta * recommendation_value - Q)*masks
             actor_loss = actor_loss.mean() / masks.mean()
 

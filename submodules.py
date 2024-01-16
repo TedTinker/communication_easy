@@ -201,7 +201,6 @@ class Objects_OUT(nn.Module):
         self.args = args
         
         self.objects_out = nn.Sequential(
-            nn.Dropout(.2),
             nn.Linear(2 * self.args.hidden_size, self.args.hidden_size), 
             nn.PReLU(),
             nn.Linear(self.args.hidden_size, self.args.hidden_size), 
@@ -234,7 +233,7 @@ if __name__ == "__main__":
     
     
 
-"""
+#"""
 class Comm_OUT(nn.Module):
 
     def __init__(self, args = default_args):
@@ -249,17 +248,15 @@ class Comm_OUT(nn.Module):
             args = self.args)
         
         self.comm_cnn = nn.Sequential(
-            nn.Dropout(.2),
             nn.PReLU(),
             Ted_Conv1d(
                 in_channels = self.args.hidden_size, 
                 out_channels = [self.args.hidden_size//4]*4, 
-                kernels = [1,1,1,1]),
+                kernels = [1,3,5,7]),
             nn.BatchNorm1d(self.args.hidden_size),
             nn.PReLU())
         
         self.comm_out = nn.Sequential(
-            nn.Dropout(.2),
             nn.Linear(
                 in_features = self.args.hidden_size, 
                 out_features = self.args.comm_shape))
@@ -306,6 +303,7 @@ class Comm_OUT(nn.Module):
         comm_pred = self.comm_out(h_w_action)
         comm_pred = comm_pred.reshape(episodes, steps, self.args.max_comm_len, self.args.comm_shape)
         return(comm_pred) 
+#"""
     
     
     
