@@ -28,16 +28,19 @@ class Objects_IN(nn.Module):
                 in_features = self.args.object_shape, 
                 out_features = self.args.hidden_size),
             nn.PReLU(),
+            nn.Dropout(.2),
             nn.Linear(
                 in_features = self.args.hidden_size, 
                 out_features = self.args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.Dropout(.2))
         
         self.objects_lin_2 = nn.Sequential(
             nn.Linear(
                 in_features = self.args.objects * self.args.hidden_size, 
                 out_features = self.args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.Dropout(.2))
                 
         self.apply(init_weights)
         self.to(self.args.device)
@@ -133,10 +136,12 @@ class Comm_IN(nn.Module):
                 in_features = self.args.max_comm_len * self.args.comm_shape, 
                 out_features = self.args.hidden_size),
             nn.PReLU(),
+            nn.Dropout(.2),
             nn.Linear(
                 in_features = self.args.hidden_size, 
                 out_features = self.args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.Dropout(.2))
                 
         self.apply(init_weights)
         self.to(self.args.device)
@@ -203,8 +208,10 @@ class Objects_OUT(nn.Module):
         self.objects_out = nn.Sequential(
             nn.Linear(2 * self.args.hidden_size, self.args.hidden_size), 
             nn.PReLU(),
+            nn.Dropout(.2),
             nn.Linear(self.args.hidden_size, self.args.hidden_size), 
             nn.PReLU(),
+            nn.Dropout(.2),
             nn.Linear(self.args.hidden_size, self.args.objects * self.args.object_shape),
             nn.Sigmoid())
         
@@ -254,7 +261,8 @@ class Comm_OUT(nn.Module):
                 out_channels = [self.args.hidden_size//4]*4, 
                 kernels = [1,3,5,7]),
             nn.BatchNorm1d(self.args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.Dropout(.4))
         
         self.comm_out = nn.Sequential(
             nn.Linear(
@@ -345,8 +353,10 @@ class Action_IN(nn.Module):
         self.action_in = nn.Sequential(
             nn.Linear(self.args.action_shape, args.hidden_size),
             nn.PReLU(),
+            nn.Dropout(.2),
             nn.Linear(self.args.hidden_size, args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.Dropout(.2))
         
         self.apply(init_weights)
         self.to(args.device)

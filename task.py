@@ -85,7 +85,7 @@ class Task:
         matching_indices = [i for i, (shape, color) in enumerate(self.current_objects)
                             if shape == goal_shape and color == goal_color]
         object_num = choice(matching_indices)
-        recommended_action = torch.ones((self.args.action_shape,)) * 0 #-1
+        recommended_action = torch.ones((self.args.action_shape,)) * -1
         recommended_action[action_num] = 1
         recommended_action[self.args.actions + object_num] = 1
         return(recommended_action)

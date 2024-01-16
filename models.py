@@ -30,7 +30,8 @@ class Actor(nn.Module):
 
         self.lin = nn.Sequential(
             nn.Linear(3 * args.hidden_size, args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.Dropout(.2))
         self.mu = nn.Sequential(
             nn.Linear(args.hidden_size, self.args.actions + self.args.objects))
         self.std = nn.Sequential(
@@ -85,6 +86,7 @@ class Critic(nn.Module):
                 in_features = 4 * self.args.hidden_size,
                 out_features = self.args.hidden_size),
             nn.PReLU(),
+            nn.Dropout(.2),
             nn.Linear(                
                 in_features = self.args.hidden_size,
                 out_features = 1))

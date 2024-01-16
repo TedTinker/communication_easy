@@ -101,39 +101,35 @@ prev_hidden_states = torch.zeros((64, args.layers, args.hidden_size))
 
 def epoch(verbose = False):
     
+    # Train forward
     tasks, goals, objects, comms, recommended_actions = batch_of_tasks()
     actions, hq, rewards, dones, wins = episode(tasks, objects, comms)
+    real_objects = objects.clone()
+    real_comm = comms.clone()
     objects = objects.tile((1, steps+1, 1, 1))
     comms = comms.tile((1, steps+1, 1, 1))
     (_, _), (_, _), (pred_objects, pred_comm), _ = forward(prev_hidden_states, objects, comms, actions)
-    
-    # Train forward
-    tasks, goals, real_objects, real_comm, recommended_actions = batch_of_tasks()
-    (_, _), (_, _), (pred_objects, pred_comm), _ = forward(prev_hidden_states, real_objects, real_comm, prev_action)
-    
-    target_comm = real_comm.reshape((real_comm.shape[0] * real_comm.shape[1] * real_comm.shape[2], real_comm.shape[3]))
+    target_comm = comms[:,1:].reshape((episodes * steps * comms.shape[2], comms.shape[3]))
     target_comm = torch.argmax(target_comm, dim = -1)
-    predicted_comm = pred_comm.reshape((pred_comm.shape[0] * pred_comm.shape[1] * pred_comm.shape[2], pred_comm.shape[3]))
-    real_comm = real_comm.reshape((real_comm.shape[0] * real_comm.shape[1], args.max_comm_len, args.comm_shape))
-    pred_comm = pred_comm.reshape((pred_comm.shape[0] * pred_comm.shape[1], args.max_comm_len, args.comm_shape))
-    
-    object_loss = F.binary_cross_entropy(pred_objects, real_objects)
-    comm_loss = .1 * F.cross_entropy(
-        predicted_comm, target_comm)
+    predicted_comm = pred_comm.reshape((episodes * steps * pred_comm.shape[2], pred_comm.shape[3]))
+    real_comm = real_comm.reshape((episodes * 1, args.max_comm_len, args.comm_shape))
+    pred_comm = pred_comm.reshape((episodes * steps, args.max_comm_len, args.comm_shape))
+    object_loss = F.binary_cross_entropy(pred_objects, objects[:,1:])
+    comm_loss = args.comm_scaler * F.cross_entropy(predicted_comm, target_comm)
     forward_loss = object_loss + comm_loss
     forward_opt.zero_grad()
     forward_loss.backward()
     forward_opt.step()
     
     # Train critic
-    tasks, goals, objects, comm, recommended_actions = batch_of_tasks()
-    (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comm, prev_action)
-    #print(objects.shape, comm.shape, forward_hidden.shape)
-    actions, log_prob, _ = actor(objects, comm, None, forward_hidden[:,:,0], None)
-    crit_rewards, dones, wins = get_rewards(tasks, actions)
-    crit_values, _ = critic(objects, comm, actions, forward_hidden[:,:,0], None)
-    crit_values = crit_values.squeeze(1)
-    critic_loss = 0.5*F.mse_loss(crit_values, crit_rewards)
+    tasks, goals, objects, comms, recommended_actions = batch_of_tasks()
+    actions, hq, rewards, dones, wins = episode(tasks, objects, comms)
+    objects = objects.tile((1, steps+1, 1, 1))
+    comms = comms.tile((1, steps+1, 1, 1))
+    (_, _), (_, _), (_, _), forward_hidden = forward(prev_hidden_states, objects, comms, actions)
+    values, _ = critic(objects[:,1:], comms[:,1:], actions[:,1:], forward_hidden[:,:-1,0], None)
+    values = values.squeeze(1)
+    critic_loss = 0.5*F.mse_loss(values, rewards)
     critic_opt.zero_grad()
     critic_loss.backward()
     critic_opt.step()
@@ -157,7 +153,7 @@ def epoch(verbose = False):
         print("\n\nREAL OBJECTS:")
         print(real_objects[0])
         print("PRED OBJECTS:")
-        print(pred_objects[0])
+        print(pred_objects[0,0])
         print("REAL COMM:")
         print(onehots_to_string(real_comm[0]))
         print("PRED COMM:")
@@ -205,7 +201,7 @@ for e in range(100000):
         ax = axs[ax_num]
         ax.plot(wins)
         try:
-            rolling_average = np.convolve(wins, np.ones(100)/100, mode='valid') 
+            rolling_average = np.convolve(wins, np.ones(100*episodes)/(100*episodes), mode='valid') 
             ax.plot(rolling_average)
         except: pass
         ax.set_ylabel("Wins")

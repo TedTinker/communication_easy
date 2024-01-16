@@ -43,15 +43,14 @@ class Agent:
         self.actor = Actor(self.args)
         self.actor_opt = optim.Adam(self.actor.parameters(), lr=self.args.actor_lr) 
         
-        self.critic1 = Critic(self.args)
-        self.critic1_opt = optim.Adam(self.critic1.parameters(), lr=self.args.actor_lr)
-        self.critic1_target = Critic(self.args)
-        self.critic1_target.load_state_dict(self.critic1.state_dict())
-
-        self.critic2 = Critic(self.args)
-        self.critic2_opt = optim.Adam(self.critic2.parameters(), lr=self.args.actor_lr)
-        self.critic2_target = Critic(self.args)
-        self.critic2_target.load_state_dict(self.critic2.state_dict())
+        self.critics = []
+        self.critic_targets = []
+        self.critic_opts = []
+        for _ in range(self.args.critics):
+            self.critics.append(Critic(self.args))
+            self.critic_targets.append(Critic(self.args))
+            self.critic_targets[-1].load_state_dict(self.critics[-1].state_dict())
+            self.critic_opts.append(optim.Adam(self.critics[-1].parameters(), lr=self.args.actor_lr))
         
         self.memory = RecurrentReplayBuffer(self.args)
         self.train()
@@ -63,8 +62,8 @@ class Agent:
             "wins" : [], "rewards" : [], "spot_names" : [], "steps" : [],
             "accuracy" : [], "complexity" : [],
             "alpha" : [], "actor" : [], 
-            "critic_1" : [], "critic_2" : [], 
-            "extrinsic" : [], "intrinsic_curiosity" : [], 
+            "critics" : [], 
+            "extrinsic" : [], "q" : [], "intrinsic_curiosity" : [], 
             "intrinsic_entropy" : [], "intrinsic_imitation" : [],
             "prediction_error" : [], "hidden_state" : [[] for _ in range(self.args.layers)]}
         
@@ -121,8 +120,9 @@ class Agent:
 
         # Fourth Column
         ax = axs[3]
-        ax.plot(self.plot_dict["critic_1"])
-        ax.plot(self.plot_dict["critic_2"])
+        for i in range(self.args.critics):
+            loss_list = [sublist[i] for sublist in self.plot_dict["critics"]]
+            ax.plot(loss_list)
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Critics")
@@ -175,15 +175,15 @@ class Agent:
                 plot_data = self.epoch(self.args.batch_size, verbose)
                 if(plot_data == False): pass
                 else:
-                    l, e, ic, ie, ii, prediction_error, hidden_state = plot_data
+                    l, e, q, ic, ie, ii, prediction_error, hidden_state = plot_data
                     if(self.epochs == 1 or self.epochs >= sum(self.args.epochs) or self.epochs % self.args.keep_data == 0):
                         self.plot_dict["accuracy"].append(l[0][0])
                         self.plot_dict["complexity"].append(l[0][1])
                         self.plot_dict["alpha"].append(l[0][2])
                         self.plot_dict["actor"].append(l[0][3])
-                        self.plot_dict["critic_1"].append(l[0][4])
-                        self.plot_dict["critic_2"].append(l[0][5])
+                        self.plot_dict["critics"].append(l[0][4])
                         self.plot_dict["extrinsic"].append(e)
+                        self.plot_dict["q"].append(q)
                         self.plot_dict["intrinsic_curiosity"].append(ic)
                         self.plot_dict["intrinsic_entropy"].append(ie)
                         self.plot_dict["intrinsic_imitation"].append(ii)
@@ -282,32 +282,34 @@ class Agent:
         # Train critics
         with torch.no_grad():
             new_actions, log_pis_next, _ = self.actor(objects, comms, actions, hqs.clone().detach(), None)
-            Q_target1_next, _ = self.critic1_target(objects, comms, new_actions, hqs.clone().detach(), None)
-            Q_target2_next, _ = self.critic2_target(objects, comms, new_actions, hqs.clone().detach(), None)
+            Q_target_nexts = []
+            for i in range(self.args.critics):
+                Q_target_next, _ = self.critic_targets[i](objects, comms, new_actions, hqs.clone().detach(), None)
+                Q_target_next[:,1:]
+                Q_target_nexts.append(Q_target_next)
             log_pis_next = log_pis_next[:,1:]
-            Q_target_next = torch.min(Q_target1_next, Q_target2_next)
+            Q_target_nexts_stacked = torch.stack(Q_target_nexts, dim=0)
+            Q_target_next, _ = torch.min(Q_target_nexts_stacked, dim=0)
             Q_target_next = Q_target_next[:,1:]
             if self.args.alpha == None: Q_targets = rewards + (self.args.GAMMA * (1 - dones) * (Q_target_next - self.alpha * log_pis_next))
             else:                       Q_targets = rewards + (self.args.GAMMA * (1 - dones) * (Q_target_next - self.args.alpha * log_pis_next))
         
-        Q_1, _ = self.critic1(objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
-        critic1_loss = 0.5*F.mse_loss(Q_1*masks, Q_targets*masks)
-        self.critic1_opt.zero_grad()
-        critic1_loss.backward()
-        self.critic1_opt.step()
+        critic_losses = []
+        Qs = []
+        for i in range(self.args.critics):
+            Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
+            critic_loss = 0.5*F.mse_loss(Q*masks, Q_targets*masks)
+            critic_losses.append(critic_loss)
+            Qs.append(Q[0,0].item())
+            self.critic_opts[i].zero_grad()
+            critic_loss.backward()
+            self.critic_opts[i].step()
         
-        Q_2, _ = self.critic2(objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), None)
-        critic2_loss = 0.5*F.mse_loss(Q_2*masks, Q_targets*masks)
-        self.critic2_opt.zero_grad()
-        critic2_loss.backward()
-        self.critic2_opt.step()
+            self.soft_update(self.critics[i], self.critic_targets[i], self.args.tau)
         
         if(verbose):
-            print("\nRewards:", rewards[0,0])
-            print("Predictions:", Q_1[0,0], Q_2[0,0])
-        
-        self.soft_update(self.critic1, self.critic1_target, self.args.tau)
-        self.soft_update(self.critic2, self.critic2_target, self.args.tau)
+            print("\nRewards:", rewards[0,0].item())
+            print("Predictions:", Qs)
         torch.cuda.empty_cache()
                                 
         
@@ -340,9 +342,13 @@ class Agent:
                 policy_prior_log_prrgbd = policy_prior.log_prob(new_actions).unsqueeze(-1)
             elif self.args.action_prior == "uniform":
                 policy_prior_log_prrgbd = 0.0
-            Q_1, _ = self.critic1(objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
-            Q_2, _ = self.critic2(objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
-            Q = torch.min(Q_1, Q_2).mean(-1).unsqueeze(-1)
+            Qs = []
+            for i in range(self.args.critics):
+                Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].clone().detach(), None)
+                Qs.append(Q)
+            Qs_stacked = torch.stack(Qs, dim=0)
+            Q, _ = torch.min(Qs_stacked, dim=0)
+            Q = Q.mean(-1).unsqueeze(-1)
             intrinsic_entropy = torch.mean((alpha * log_pis)*masks).item()
             recommendation_value = calculate_similarity(recommended_actions, new_actions).unsqueeze(-1)
             intrinsic_imitation = -torch.mean((self.args.delta * recommendation_value)*masks).item() 
@@ -358,6 +364,7 @@ class Agent:
             self.actor_opt.step()
             
         else:
+            Q = None
             intrinsic_entropy = None
             intrinsic_imitation = None
             actor_loss = None
@@ -368,19 +375,17 @@ class Agent:
         if(complexity != None): complexity = complexity.item()
         if(alpha_loss != None): alpha_loss = alpha_loss.item()
         if(actor_loss != None): actor_loss = actor_loss.item()
-        if(critic1_loss != None): 
-            critic1_loss = critic1_loss.item()
-            critic1_loss = log(critic1_loss) if critic1_loss > 0 else critic1_loss
-        if(critic2_loss != None): 
-            critic2_loss = critic2_loss.item()
-            critic2_loss = log(critic2_loss) if critic2_loss > 0 else critic2_loss
-        losses = np.array([[accuracy, complexity, alpha_loss, actor_loss, critic1_loss, critic2_loss]])
+        for i in range(self.args.critics):
+            if(critic_losses[i] != None): 
+                critic_losses[i] = critic_losses[i].item()
+                critic_losses[i] = log(critic_losses[i]) if critic_losses[i] > 0 else critic_losses[i]
+        losses = np.array([[accuracy, complexity, alpha_loss, actor_loss, critic_losses]])
         
         prediction_error_curiosity = prediction_error_curiosity.mean().item()
         hidden_state_curiosities = [hidden_state_curiosity.mean().item() for hidden_state_curiosity in hidden_state_curiosities]
         hidden_state_curiosities = [hidden_state_curiosity for hidden_state_curiosity in hidden_state_curiosities]
         
-        return(losses, extrinsic, intrinsic_curiosity, intrinsic_entropy, intrinsic_imitation, prediction_error_curiosity, hidden_state_curiosities)
+        return(losses, extrinsic, Q, intrinsic_curiosity, intrinsic_entropy, intrinsic_imitation, prediction_error_curiosity, hidden_state_curiosities)
     
     
                      
@@ -389,38 +394,33 @@ class Agent:
             target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
 
     def state_dict(self):
-        return(
-            self.forward.state_dict(),
-            self.actor.state_dict(),
-            self.critic1.state_dict(),
-            self.critic1_target.state_dict(),
-            self.critic2.state_dict(),
-            self.critic2_target.state_dict())
+        to_return = [self.forward.state_dict(), self.actor.state_dict()]
+        for i in range(self.args.critics):
+            to_return.append(self.critics[i].state_dict())
+            to_return.append(self.critic_targets[i].state_dict())
+        return(to_return)
 
     def load_state_dict(self, state_dict):
         self.forward.load_state_dict(state_dict[0])
         self.actor.load_state_dict(state_dict[1])
-        self.critic1.load_state_dict(state_dict[2])
-        self.critic1_target.load_state_dict(state_dict[3])
-        self.critic2.load_state_dict(state_dict[4])
-        self.critic2_target.load_state_dict(state_dict[5])
+        for i in range(self.args.critics):
+            self.critics[i].load_state_dict(state_dict[2+2*i])
+            self.critic_target[i].load_state_dict(state_dict[3+2*i])
         self.memory = RecurrentReplayBuffer(self.args)
 
     def eval(self):
         self.forward.eval()
         self.actor.eval()
-        self.critic1.eval()
-        self.critic1_target.eval()
-        self.critic2.eval()
-        self.critic2_target.eval()
+        for i in range(self.args.critics):
+            self.critics[i].eval()
+            self.critic_targets[i].eval()
 
     def train(self):
         self.forward.train()
         self.actor.train()
-        self.critic1.train()
-        self.critic1_target.train()
-        self.critic2.train()
-        self.critic2_target.train()
+        for i in range(self.args.critics):
+            self.critics[i].train()
+            self.critic_targets[i].train()
         
         
         

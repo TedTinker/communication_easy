@@ -91,25 +91,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--device',             type=str,        default = device,
                     help='Which device to use for Torch.')
 
-    # Training
-parser.add_argument('--epochs',             type=literal,    default = [10000],
-                    help='List of how many epochs to train in each maze.')
-parser.add_argument('--batch_size',         type=int,        default = 128, 
-                    help='How many episodes are sampled for each epoch.')
-parser.add_argument('--GAMMA',              type=float,      default = 0,
-                    help='How heavily critics consider the future.')
-parser.add_argument("--d",                  type=int,        default = 1,
-                    help='Delay for training actors.')        
-
-    # Memory buffer
-parser.add_argument('--capacity',           type=int,        default = 250,
-                    help='How many episodes can the memory buffer contain.')
-
-    # Task and Agent details
+    # Task details
 parser.add_argument('--task_probabilities', type=literal,    default = [
     (("1", 1),)],
                     help='List of probabilities of tasks. Agent trains on each set of tasks based on epochs in epochs parameter.')
-parser.add_argument('--max_steps',          type=int,        default = 3,
+parser.add_argument('--max_steps',          type=int,        default = 1,
                     help='How many steps the agent can make in one episode.')
 parser.add_argument('--step_lim_punishment',type=float,      default = -1,
                     help='Extrinsic punishment for taking max_steps steps.')
@@ -133,10 +119,22 @@ parser.add_argument('--colors',            type=int,        default = 6,
                     help='Maximum count of colors in one episode.')
 parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
-parser.add_argument('--comm_scaler',       type=float,      default = .1,
+parser.add_argument('--comm_scaler',       type=float,      default = .05,
                     help='How the forward-model values comm-loss versus object-loss.')
 
+    # Training
+parser.add_argument('--epochs',             type=literal,    default = [10000],
+                    help='List of how many epochs to train in each maze.')
+parser.add_argument('--batch_size',         type=int,        default = 128, 
+                    help='How many episodes are sampled for each epoch.')       
+
+    # Memory buffer
+parser.add_argument('--capacity',           type=int,        default = 250,
+                    help='How many episodes can the memory buffer contain.')
+
     # Module 
+parser.add_argument('--critics',            type=int,        default = 2,
+                    help='How many critics?')   
 parser.add_argument('--hidden_size',        type=int,        default = 32,
                     help='Parameters in hidden layers.')   
 parser.add_argument('--state_size',         type=int,        default = 128,
@@ -153,6 +151,10 @@ parser.add_argument('--critic_lr',          type=float,      default = .01,
                     help='Learning rate for critic model.')
 parser.add_argument("--tau",                type=float,      default = .1,
                     help='Rate at which target-critics approach critics.')      
+parser.add_argument('--GAMMA',              type=float,      default = 0,
+                    help='How heavily critics consider the future.')
+parser.add_argument("--d",                  type=int,        default = 2,
+                    help='Delay for training actors.') 
 
     # Complexity 
 parser.add_argument('--std_min',            type=int,        default = exp(-20),
