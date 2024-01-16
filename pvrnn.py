@@ -32,24 +32,24 @@ class PVRNN_LAYER(nn.Module):
         # Prior: Previous hidden state, plus action if bottom.  
         self.zp_mu = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.hidden_size + (self.args.hidden_size if self.bottom else 0), 
+                    in_features = self.args.pvrnn_mtrnn_size + (self.args.hidden_size if self.bottom else 0), 
                     out_features = self.args.state_size), 
                 nn.Tanh())
         self.zp_std = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.hidden_size + (self.args.hidden_size if self.bottom else 0), 
+                    in_features = self.args.pvrnn_mtrnn_size + (self.args.hidden_size if self.bottom else 0), 
                     out_features = self.args.state_size), 
                 nn.Softplus())
                             
         # Posterior: Previous hidden state, plus observation and action if bottom, plus lower-layer hidden state otherwise.
         self.zq_mu = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.hidden_size + self.args.hidden_size * (3 if self.bottom else 1), 
+                    in_features = self.args.pvrnn_mtrnn_size + (3 * self.args.hidden_size if self.bottom else self.args.pvrnn_mtrnn_size), 
                     out_features = self.args.state_size), 
                 nn.Tanh())
         self.zq_std = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.hidden_size + self.args.hidden_size * (3 if self.bottom else 1), 
+                    in_features = self.args.pvrnn_mtrnn_size + (3 * self.args.hidden_size if self.bottom else self.args.pvrnn_mtrnn_size), 
                     out_features = self.args.state_size), 
                 nn.Softplus())
                             
@@ -64,8 +64,9 @@ class PVRNN_LAYER(nn.Module):
         
         self.mtrnn = nn.Sequential(
             nn.Linear(
-                in_features = self.args.state_size + (self.args.hidden_size if not self.top else 0) + self.args.hidden_size,
-                out_features = self.args.hidden_size))
+                in_features = self.args.pvrnn_mtrnn_size + self.args.state_size + (self.args.pvrnn_mtrnn_size if not self.top else 0),
+                out_features = self.args.pvrnn_mtrnn_size),
+            nn.Tanh())
         #"""
             
         self.apply(init_weights)
@@ -115,7 +116,7 @@ if __name__ == "__main__":
     print(bottom_top_layer)
     print()
     print(torch_summary(bottom_top_layer, 
-                        ((episodes, 1, args.hidden_size), 
+                        ((episodes, 1, args.pvrnn_mtrnn_size), 
                          (episodes, 1, args.objects, args.object_shape), 
                          (episodes, 1, args.max_comm_len, args.comm_shape),
                          (episodes, 1, args.actions + args.objects))))
@@ -126,12 +127,12 @@ if __name__ == "__main__":
     print(bottom_layer)
     print()
     print(torch_summary(bottom_layer, 
-                        ((episodes, 1, args.hidden_size), 
+                        ((episodes, 1, args.pvrnn_mtrnn_size), 
                          (episodes, 1, args.objects, args.object_shape), 
                          (episodes, 1, args.max_comm_len, args.comm_shape),
                          (episodes, 1, args.actions + args.objects),
                          (1,), # No hidden_states_below 
-                         (episodes, 1, args.hidden_size))))
+                         (episodes, 1, args.pvrnn_mtrnn_size))))
     
     top_layer = PVRNN_LAYER(top = True, args = args)
     
@@ -139,11 +140,11 @@ if __name__ == "__main__":
     print(top_layer)
     print()
     print(torch_summary(top_layer, 
-                        ((episodes, 1, args.hidden_size), 
+                        ((episodes, 1, args.pvrnn_mtrnn_size), 
                          (1,), # No objects
                          (1,), # No comms
                          (1,), # No actions
-                         (episodes, 1, args.hidden_size))))
+                         (episodes, 1, args.pvrnn_mtrnn_size))))
     
     middle_layer = PVRNN_LAYER(args = args)
     
@@ -151,12 +152,12 @@ if __name__ == "__main__":
     print(middle_layer)
     print()
     print(torch_summary(middle_layer, 
-                        ((episodes, 1, args.hidden_size), 
+                        ((episodes, 1, args.pvrnn_mtrnn_size), 
                          (1,), # No objects
                          (1,), # No comms
                          (1,), # No actions
-                         (episodes, 1, args.hidden_size),
-                         (episodes, 1, args.hidden_size))))
+                         (episodes, 1, args.pvrnn_mtrnn_size),
+                         (episodes, 1, args.pvrnn_mtrnn_size))))
     
     
     
@@ -269,7 +270,7 @@ if __name__ == "__main__":
     print(pvrnn)
     print()
     print(torch_summary(pvrnn, 
-                        ((episodes, args.layers, args.hidden_size), 
+                        ((episodes, args.layers, args.pvrnn_mtrnn_size), 
                          (episodes, steps+1, args.objects, args.object_shape), 
                          (episodes, steps+1, args.max_comm_len, args.comm_shape),
                          (episodes, steps+1, args.actions + args.objects))))

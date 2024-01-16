@@ -60,7 +60,7 @@ class Agent:
             "pred_lists" : {}, "pos_lists" : {}, 
             "agent_lists" : {"forward" : PVRNN, "actor" : Actor, "critic" : Critic},
             "wins" : [], "rewards" : [], "spot_names" : [], "steps" : [],
-            "accuracy" : [], "complexity" : [],
+            "accuracy" : [], "object_loss" : [], "comm_loss" : [], "complexity" : [],
             "alpha" : [], "actor" : [], 
             "critics" : [], 
             "extrinsic" : [], "q" : [], "intrinsic_curiosity" : [], 
@@ -103,8 +103,10 @@ class Agent:
 
         # Second Column
         ax = axs[1]
-        ax.plot(self.plot_dict["accuracy"])
-        ax.plot(self.plot_dict["complexity"])
+        ax.plot(self.plot_dict["accuracy"], color = "red")
+        ax.plot(self.plot_dict["object_loss"], color = "green")
+        ax.plot(self.plot_dict["comm_loss"], color = "blue")
+        ax.plot(self.plot_dict["complexity"], color = "purple")
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Accuracy and Complexity")
@@ -158,7 +160,7 @@ class Agent:
     def training_episode(self, push = True, verbose = False):
         done = False ; steps = 0
         prev_action = torch.zeros((1, 1, self.args.action_shape))
-        hq = torch.zeros((1, self.args.layers, self.args.hidden_size)) 
+        hq = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
         ha = torch.zeros((1, 1, self.args.hidden_size)) 
         
         selected_task = choose_task(self.task_probabilities)
@@ -175,13 +177,15 @@ class Agent:
                 plot_data = self.epoch(self.args.batch_size, verbose)
                 if(plot_data == False): pass
                 else:
-                    l, e, q, ic, ie, ii, prediction_error, hidden_state = plot_data
+                    accuracy, object_loss, comm_loss, complexity, alpha, actor, critics, e, q, ic, ie, ii, prediction_error, hidden_state = plot_data
                     if(self.epochs == 1 or self.epochs >= sum(self.args.epochs) or self.epochs % self.args.keep_data == 0):
-                        self.plot_dict["accuracy"].append(l[0][0])
-                        self.plot_dict["complexity"].append(l[0][1])
-                        self.plot_dict["alpha"].append(l[0][2])
-                        self.plot_dict["actor"].append(l[0][3])
-                        self.plot_dict["critics"].append(l[0][4])
+                        self.plot_dict["accuracy"].append(accuracy)
+                        self.plot_dict["object_loss"].append(object_loss)
+                        self.plot_dict["comm_loss"].append(comm_loss)
+                        self.plot_dict["complexity"].append(complexity)
+                        self.plot_dict["alpha"].append(alpha)
+                        self.plot_dict["actor"].append(actor)
+                        self.plot_dict["critics"].append(critics)
                         self.plot_dict["extrinsic"].append(e)
                         self.plot_dict["q"].append(q)
                         self.plot_dict["intrinsic_curiosity"].append(ic)
@@ -225,7 +229,7 @@ class Agent:
                 
         
         # Train forward
-        (zp_mu, zp_std), (zq_mu, zq_std), (pred_objects, pred_comms), hqs = self.forward(torch.zeros((episodes, self.args.layers, self.args.hidden_size)), objects, comms, actions)
+        (zp_mu, zp_std), (zq_mu, zq_std), (pred_objects, pred_comms), hqs = self.forward(torch.zeros((episodes, self.args.layers, self.args.pvrnn_mtrnn_size)), objects, comms, actions)
         hqs = hqs[:,:,0]
         
         object_loss   = F.binary_cross_entropy(pred_objects, objects[:,1:], reduction = "none")
@@ -234,7 +238,7 @@ class Agent:
         
         if(verbose):
             print("\nObjects:", objects[0,1])
-            print("Prediciton:", pred_objects[0,0])
+            print("Prediction:", pred_objects[0,0])
         
         real_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
         real_comms = torch.argmax(real_comms, dim = -1)
@@ -372,6 +376,8 @@ class Agent:
                                 
                                 
         if(accuracy != None):   accuracy = accuracy.item()
+        if(object_loss != None):   object_loss = object_loss.mean().item()
+        if(comm_loss != None):   comm_loss = self.args.comm_scaler * comm_loss.mean().item()
         if(complexity != None): complexity = complexity.item()
         if(alpha_loss != None): alpha_loss = alpha_loss.item()
         if(actor_loss != None): actor_loss = actor_loss.item()
@@ -379,13 +385,14 @@ class Agent:
             if(critic_losses[i] != None): 
                 critic_losses[i] = critic_losses[i].item()
                 critic_losses[i] = log(critic_losses[i]) if critic_losses[i] > 0 else critic_losses[i]
-        losses = np.array([[accuracy, complexity, alpha_loss, actor_loss, critic_losses]])
+        losses = [accuracy, object_loss, comm_loss, complexity, alpha_loss, actor_loss, critic_losses]
         
         prediction_error_curiosity = prediction_error_curiosity.mean().item()
         hidden_state_curiosities = [hidden_state_curiosity.mean().item() for hidden_state_curiosity in hidden_state_curiosities]
         hidden_state_curiosities = [hidden_state_curiosity for hidden_state_curiosity in hidden_state_curiosities]
         
-        return(losses, extrinsic, Q, intrinsic_curiosity, intrinsic_entropy, intrinsic_imitation, prediction_error_curiosity, hidden_state_curiosities)
+        return(accuracy, object_loss, comm_loss, complexity, alpha_loss, actor_loss, critic_losses, 
+               extrinsic, Q, intrinsic_curiosity, intrinsic_entropy, intrinsic_imitation, prediction_error_curiosity, hidden_state_curiosities)
     
     
                      

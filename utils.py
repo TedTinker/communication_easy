@@ -137,6 +137,8 @@ parser.add_argument('--critics',            type=int,        default = 2,
                     help='How many critics?')   
 parser.add_argument('--hidden_size',        type=int,        default = 32,
                     help='Parameters in hidden layers.')   
+parser.add_argument('--pvrnn_mtrnn_size',   type=int,        default = 64,
+                    help='Parameters in hidden layers pf PVRNN\'s mtrnn.')   
 parser.add_argument('--state_size',         type=int,        default = 128,
                     help='Parameters in prior and posterior inner-states.')
 parser.add_argument('--time_scales',        type=literal,    default = [1],

@@ -206,7 +206,7 @@ class Objects_OUT(nn.Module):
         self.args = args
         
         self.objects_out = nn.Sequential(
-            nn.Linear(2 * self.args.hidden_size, self.args.hidden_size), 
+            nn.Linear(self.args.pvrnn_mtrnn_size + self.args.hidden_size, self.args.hidden_size), 
             nn.PReLU(),
             nn.Dropout(.2),
             nn.Linear(self.args.hidden_size, self.args.hidden_size), 
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     print(objects_out)
     print()
     print(torch_summary(objects_out, 
-                        (episodes, steps, 2 * args.hidden_size)))
+                        (episodes, steps, args.pvrnn_mtrnn_size + args.hidden_size)))
     
     
 
@@ -249,13 +249,12 @@ class Comm_OUT(nn.Module):
         self.args = args
         
         self.comm_rnn = MTRNN(
-            input_size = 2 * self.args.hidden_size, 
+            input_size = self.args.pvrnn_mtrnn_size + self.args.hidden_size, 
             hidden_size = self.args.hidden_size, 
             time_constant = True,
             args = self.args)
         
         self.comm_cnn = nn.Sequential(
-            nn.PReLU(),
             Ted_Conv1d(
                 in_channels = self.args.hidden_size, 
                 out_channels = [self.args.hidden_size//4]*4, 
@@ -323,7 +322,7 @@ if __name__ == "__main__":
     print(comm_out)
     print()
     print(torch_summary(comm_out, 
-                        (episodes, steps, 2 * args.hidden_size)))
+                        (episodes, steps, args.pvrnn_mtrnn_size + args.hidden_size)))
     
     
     

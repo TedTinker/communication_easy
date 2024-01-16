@@ -29,7 +29,7 @@ class Actor(nn.Module):
         self.obs_in = Obs_IN(args)
 
         self.lin = nn.Sequential(
-            nn.Linear(3 * args.hidden_size, args.hidden_size),
+            nn.Linear(self.args.pvrnn_mtrnn_size + 2 * args.hidden_size, args.hidden_size),
             nn.PReLU(),
             nn.Dropout(.2))
         self.mu = nn.Sequential(
@@ -83,7 +83,7 @@ class Critic(nn.Module):
         
         self.value = nn.Sequential(
             nn.Linear(
-                in_features = 4 * self.args.hidden_size,
+                in_features = self.args.pvrnn_mtrnn_size + 3 * self.args.hidden_size,
                 out_features = self.args.hidden_size),
             nn.PReLU(),
             nn.Dropout(.2),
