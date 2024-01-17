@@ -69,7 +69,7 @@ if __name__ == "__main__":
     
     
 
-"""
+""" # Works, but slowly.
 class Comm_IN(nn.Module):
 
     def __init__(self, args = default_args):
@@ -81,16 +81,28 @@ class Comm_IN(nn.Module):
             nn.Embedding(
                 num_embeddings = self.args.comm_shape,
                 embedding_dim = self.args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.Dropout(.2))
         
         self.comm_cnn = nn.Sequential(
-            nn.Dropout(.2),
             Ted_Conv1d(
                 in_channels = self.args.hidden_size, 
                 out_channels = [self.args.hidden_size//4]*4, 
-                kernels = [1,1,3,5]),
+                kernels = [1,3,5,7]),
             nn.BatchNorm1d(self.args.hidden_size),
-            nn.PReLU())
+            nn.PReLU(),
+            nn.AvgPool1d(
+                kernel_size = 2,
+                stride = 2),
+            Ted_Conv1d(
+                in_channels = self.args.hidden_size, 
+                out_channels = [self.args.hidden_size//4]*4, 
+                kernels = [1,3,3,5]),
+            nn.BatchNorm1d(self.args.hidden_size),
+            nn.PReLU(),
+            nn.AvgPool1d(
+                kernel_size = 2,
+                stride = 2))
         
         self.comm_rnn = MTRNN(
             input_size = self.args.hidden_size, 
@@ -132,9 +144,16 @@ class Comm_IN(nn.Module):
         
         self.args = args
         
+        self.comm_embedding = nn.Sequential(
+            nn.Embedding(
+                num_embeddings = self.args.comm_shape,
+                embedding_dim = self.args.hidden_size),
+            nn.PReLU(),
+            nn.Dropout(.2))
+        
         self.comm_lin = nn.Sequential(
             nn.Linear(
-                in_features = self.args.max_comm_len * self.args.comm_shape, 
+                in_features = self.args.max_comm_len * self.args.hidden_size, 
                 out_features = self.args.hidden_size),
             nn.PReLU(),
             nn.Dropout(.2),
@@ -152,7 +171,9 @@ class Comm_IN(nn.Module):
         if(len(comm.shape) == 3):  comm = comm.unsqueeze(1)
         episodes, steps = episodes_steps(comm)
         comm = pad_zeros(comm, self.args.max_comm_len)
-        comm = comm.reshape((episodes, steps, self.args.max_comm_len * self.args.comm_shape))
+        comm = torch.argmax(comm, dim = -1)
+        comm = self.comm_embedding(comm.int())
+        comm = comm.reshape((episodes, steps, self.args.max_comm_len * self.args.hidden_size))
         comm = self.comm_lin(comm)
         return(comm)
 #"""
@@ -251,7 +272,7 @@ class Comm_OUT(nn.Module):
         self.comm_rnn = MTRNN(
             input_size = self.args.pvrnn_mtrnn_size + self.args.hidden_size, 
             hidden_size = self.args.hidden_size, 
-            time_constant = True,
+            time_constant = 1,
             args = self.args)
         
         self.comm_cnn = nn.Sequential(

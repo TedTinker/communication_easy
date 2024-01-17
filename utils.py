@@ -107,7 +107,7 @@ parser.add_argument('--color_reward',       type=float,     default = 1,
                     help='Extrinsic reward for choosing incorrect color.')  
 parser.add_argument('--correct_reward',     type=float,     default = 1,
                     help='Extrinsic reward for choosing incorrect action, shape, and color.') 
-parser.add_argument('--step_cost',          type=float,      default = 1,
+parser.add_argument('--step_cost',          type=float,      default = .9,
                     help='How much extrinsic rewards for exiting are reduced per step.')
 parser.add_argument('--actions',            type=int,        default = 5,
                     help='Maximum count of actions in one episode.')
@@ -119,8 +119,6 @@ parser.add_argument('--colors',            type=int,        default = 6,
                     help='Maximum count of colors in one episode.')
 parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
-parser.add_argument('--comm_scaler',       type=float,      default = .05,
-                    help='How the forward-model values comm-loss versus object-loss.')
 
     # Training
 parser.add_argument('--epochs',             type=literal,    default = [10000],
@@ -153,7 +151,7 @@ parser.add_argument('--critic_lr',          type=float,      default = .01,
                     help='Learning rate for critic model.')
 parser.add_argument("--tau",                type=float,      default = .1,
                     help='Rate at which target-critics approach critics.')      
-parser.add_argument('--GAMMA',              type=float,      default = 0,
+parser.add_argument('--GAMMA',              type=float,      default = .9,
                     help='How heavily critics consider the future.')
 parser.add_argument("--d",                  type=int,        default = 2,
                     help='Delay for training actors.') 

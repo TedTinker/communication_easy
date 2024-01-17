@@ -54,10 +54,10 @@ class PVRNN_LAYER(nn.Module):
                 nn.Softplus())
                             
         # New hidden state: Previous hidden state, zq value, plus higher-layer hidden state if not top.
-        """
+        #"""
         self.mtrnn = MTRNN(
-                input_size = self.args.state_size + (self.args.hidden_size if not self.top else 0),
-                hidden_size = self.args.hidden_size, 
+                input_size = self.args.state_size + (self.args.pvrnn_mtrnn_size if not self.top else 0),
+                hidden_size = self.args.pvrnn_mtrnn_size, 
                 time_constant = time_scale,
                 args = self.args)
         """
@@ -98,8 +98,8 @@ class PVRNN_LAYER(nn.Module):
         else:
             mtrnn_inputs = torch.cat([zq, prev_hidden_states_above], dim = -1)
             
-        #new_hidden_states = self.mtrnn(mtrnn_inputs, prev_hidden_states)
-        new_hidden_states = self.mtrnn(torch.cat([mtrnn_inputs, prev_hidden_states], dim = -1))
+        new_hidden_states = self.mtrnn(mtrnn_inputs, prev_hidden_states)
+        #new_hidden_states = self.mtrnn(torch.cat([mtrnn_inputs, prev_hidden_states], dim = -1))
         
         return(
             (zp_mu, zp_std),

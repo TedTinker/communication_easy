@@ -329,7 +329,7 @@ class Agent:
         
         if(verbose):
             print("\nRewards:", rewards[0,0].item())
-            print("Predictions:", Qs)
+            print("VALUES:", Qs)
         torch.cuda.empty_cache()
                                 
         
@@ -374,8 +374,8 @@ class Agent:
             intrinsic_imitation = -torch.mean((self.args.delta * recommendation_value)*masks).item() 
             if(verbose):
                 print("\nQ:", -Q[0,0])
-                print("ENTROPY:", alpha * log_pis[0,0])
-                print("RECOMMENDED VALUE:", -self.args.delta * recommendation_value[0,0])
+                print("ENTROPY VALUE:", alpha * log_pis[0,0])
+                print("IMITATION VALUE:", -self.args.delta * recommendation_value[0,0])
             actor_loss = (alpha * log_pis - policy_prior_log_prrgbd - self.args.delta * recommendation_value - Q)*masks
             actor_loss = actor_loss.mean() / masks.mean()
 

@@ -67,7 +67,7 @@ if __name__ == "__main__":
                          (episodes, steps, args.hidden_size),
                          (episodes, steps, args.hidden_size),
                          (episodes, steps, args.hidden_size))))
-    
+
     
     
 class Critic(nn.Module): 
@@ -81,9 +81,15 @@ class Critic(nn.Module):
         
         self.action_in = Action_IN(self.args)
         
+        self.mtrnn = MTRNN(
+                input_size = self.args.pvrnn_mtrnn_size + 3 * self.args.hidden_size,
+                hidden_size = self.args.hidden_size, 
+                time_constant = 1,
+                args = self.args)
+        
         self.value = nn.Sequential(
             nn.Linear(
-                in_features = self.args.pvrnn_mtrnn_size + 3 * self.args.hidden_size,
+                in_features = self.args.hidden_size,
                 out_features = self.args.hidden_size),
             nn.PReLU(),
             nn.Dropout(.2),
@@ -96,7 +102,9 @@ class Critic(nn.Module):
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
         obs = self.obs_in(objects, comm)
         action = self.action_in(action)
-        value = self.value(torch.cat([obs, action, forward_hidden], dim=-1))
+        value = torch.cat([obs, action, forward_hidden], dim=-1)
+        value = self.mtrnn(value)
+        value = self.value(value)
         return(value, critic_hidden)
     
 
