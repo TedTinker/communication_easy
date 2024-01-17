@@ -95,7 +95,7 @@ parser.add_argument('--device',             type=str,        default = device,
 parser.add_argument('--task_probabilities', type=literal,    default = [
     (("1", 1),)],
                     help='List of probabilities of tasks. Agent trains on each set of tasks based on epochs in epochs parameter.')
-parser.add_argument('--max_steps',          type=int,        default = 1,
+parser.add_argument('--max_steps',          type=int,        default = 3,
                     help='How many steps the agent can make in one episode.')
 parser.add_argument('--step_lim_punishment',type=float,      default = -1,
                     help='Extrinsic punishment for taking max_steps steps.')
@@ -342,6 +342,24 @@ def onehots_to_string(onehots):
         index = torch.argmax(tensor).item()
         string += comm_map[index]
     return string
+
+def multihots_to_string(multihots):
+    shapes = multihots[:,:len(shape_map)]
+    colors = multihots[:,len(shape_map):]
+    to_return = ""
+    for i in range(multihots.shape[0]):
+        shape_index = torch.argmax(shapes[i]).item()
+        color_index = torch.argmax(colors[i]).item()
+        to_return += "{} {}{}".format(color_map[color_index], shape_map[shape_index], "." if i+1 == multihots.shape[0] else ", ")
+    return(to_return)
+
+def action_to_string(action):
+    while(len(action.shape) > 1): action = action.squeeze(0)
+    act = action[:len(action_map)]
+    act_index = torch.argmax(act).item()
+    objects = action[len(action_map):]
+    object_index = torch.argmax(objects).item()
+    return("{} object {}.\t".format(action_map[act_index], object_index))
 
 def pad_zeros(value, length):
     rows_to_add = length - value.size(-2)

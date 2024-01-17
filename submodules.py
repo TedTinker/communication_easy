@@ -1,6 +1,7 @@
 #%%
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torchinfo import summary as torch_summary
 
 from utils import default_args, init_weights, attach_list, detach_list, \
@@ -23,7 +24,7 @@ class Objects_IN(nn.Module):
         
         self.args = args
         
-        self.objects_lin = nn.Sequential(
+        self.objects_in_1 = nn.Sequential(
             nn.Linear(
                 in_features = self.args.object_shape, 
                 out_features = self.args.hidden_size),
@@ -35,7 +36,7 @@ class Objects_IN(nn.Module):
             nn.PReLU(),
             nn.Dropout(.2))
         
-        self.objects_lin_2 = nn.Sequential(
+        self.objects_in_2 = nn.Sequential(
             nn.Linear(
                 in_features = self.args.objects * self.args.hidden_size, 
                 out_features = self.args.hidden_size),
@@ -49,9 +50,9 @@ class Objects_IN(nn.Module):
         if(len(objects.shape) == 2):   objects  = objects.unsqueeze(0)
         if(len(objects.shape) == 3):   objects  = objects.unsqueeze(1)
         episodes, steps = episodes_steps(objects)
-        objects = self.objects_lin(objects)
+        objects = self.objects_in_1(objects)
         objects = objects.reshape((episodes, steps, self.args.objects * self.args.hidden_size))
-        objects = self.objects_lin_2(objects)
+        objects = self.objects_in_2(objects)
         return(objects)
     
     
@@ -198,6 +199,7 @@ if __name__ == "__main__":
     
 
 
+#"""
 class Objects_OUT(nn.Module):
 
     def __init__(self, args = default_args):
@@ -212,8 +214,7 @@ class Objects_OUT(nn.Module):
             nn.Linear(self.args.hidden_size, self.args.hidden_size), 
             nn.PReLU(),
             nn.Dropout(.2),
-            nn.Linear(self.args.hidden_size, self.args.objects * self.args.object_shape),
-            nn.Sigmoid())
+            nn.Linear(self.args.hidden_size, self.args.objects * self.args.object_shape))
         
         self.apply(init_weights)
         self.to(self.args.device)
@@ -240,7 +241,6 @@ if __name__ == "__main__":
     
     
 
-#"""
 class Comm_OUT(nn.Module):
 
     def __init__(self, args = default_args):
@@ -286,31 +286,6 @@ class Comm_OUT(nn.Module):
         comm_h = comm_h.reshape(episodes, steps, self.args.max_comm_len, self.args.hidden_size)
         comm_pred = self.comm_out(comm_h)
         return(comm_pred)
-"""
-
-class Comm_OUT(nn.Module):
-
-    def __init__(self, args = default_args):
-        super(Comm_OUT, self).__init__()  
-                
-        self.args = args
-        
-        self.comm_out = nn.Sequential(
-            nn.Linear(
-                in_features = 2 * self.args.hidden_size, 
-                out_features = self.args.max_comm_len * self.args.comm_shape))
-        
-        self.apply(init_weights)
-        self.to(self.args.device)
-                
-    def forward(self, h_w_action):
-        if(len(h_w_action.shape) == 2):   h_w_action = h_w_action.unsqueeze(1)
-        [h_w_action] = attach_list([h_w_action], self.args.device)
-        episodes, steps = episodes_steps(h_w_action)
-        comm_pred = self.comm_out(h_w_action)
-        comm_pred = comm_pred.reshape(episodes, steps, self.args.max_comm_len, self.args.comm_shape)
-        return(comm_pred) 
-#"""
     
     
     

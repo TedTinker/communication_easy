@@ -9,7 +9,7 @@ import numpy as np
 from math import log
 import matplotlib.pyplot as plt
 
-from utils import default_args, dkl, print, choose_task, calculate_similarity, onehots_to_string
+from utils import default_args, dkl, print, choose_task, calculate_similarity, onehots_to_string, multihots_to_string
 from task import Task, Task_Runner
 from buffer import RecurrentReplayBuffer
 from pvrnn import PVRNN
@@ -113,9 +113,10 @@ class Agent:
 
         # Third Column
         ax = axs[2]
-        ax.plot([actor_loss for actor_loss in self.plot_dict["actor"] if actor_loss != None])
-        ax.plot([alpha_loss for alpha_loss in self.plot_dict["intrinsic_entropy"] if alpha_loss != None])
-        ax.plot([delta_loss for delta_loss in self.plot_dict["intrinsic_imitation"] if delta_loss != None])
+        ax.plot([actor_loss for actor_loss in self.plot_dict["actor"] if actor_loss != None], color = "red")
+        ax.plot([alpha_loss for alpha_loss in self.plot_dict["intrinsic_entropy"] if alpha_loss != None], color = "green")
+        ax.plot([delta_loss for delta_loss in self.plot_dict["intrinsic_imitation"] if delta_loss != None], color = "blue")
+        ax.plot([q for q in self.plot_dict["q"] if q != None], color = "purple")
         ax.set_ylabel("Value")
         ax.set_xlabel("Epochs")
         ax.set_title("Actor")
@@ -232,13 +233,28 @@ class Agent:
         (zp_mu, zp_std), (zq_mu, zq_std), (pred_objects, pred_comms), hqs = self.forward(torch.zeros((episodes, self.args.layers, self.args.pvrnn_mtrnn_size)), objects, comms, actions)
         hqs = hqs[:,:,0]
         
-        object_loss   = F.binary_cross_entropy(pred_objects, objects[:,1:], reduction = "none")
-        object_loss = object_loss.reshape((episodes, steps, self.args.objects * (self.args.shapes + self.args.colors)))
-        object_loss = object_loss.mean(-1).unsqueeze(-1) * masks
+        real_shapes = objects[:,1:,:,:self.args.shapes]
+        real_shapes = real_shapes.reshape((episodes * steps * self.args.objects, self.args.shapes))
+        real_shapes = torch.argmax(real_shapes, dim = -1)
+        pred_shapes = pred_objects[:,:,:,:self.args.shapes]
+        pred_shapes = pred_shapes.reshape((episodes * steps * self.args.objects, self.args.shapes))
+        shape_loss = F.cross_entropy(pred_shapes, real_shapes, reduction = "none")
+        shape_loss = shape_loss.reshape((episodes, steps, self.args.objects))
+        
+        real_colors = objects[:,1:,:,self.args.shapes:]
+        real_colors = real_colors.reshape((episodes * steps * self.args.objects, self.args.colors))
+        real_colors = torch.argmax(real_colors, dim = -1)
+        pred_colors = pred_objects[:,:,:,self.args.shapes:]
+        pred_colors = pred_colors.reshape((episodes * steps * self.args.objects, self.args.colors))
+        color_loss = F.cross_entropy(pred_colors, real_colors, reduction = "none")
+        color_loss = color_loss.reshape((episodes, steps, self.args.objects))
+        
+        object_loss = shape_loss.mean(-1).unsqueeze(-1) * masks
+        object_loss += color_loss.mean(-1).unsqueeze(-1) * masks
         
         if(verbose):
-            print("\nObjects:", objects[0,1])
-            print("Prediction:", pred_objects[0,0])
+            print("\nReal Objects:", multihots_to_string(objects[0,1]))
+            print("Pred Objects:", multihots_to_string(pred_objects[0,0]))
         
         real_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
         real_comms = torch.argmax(real_comms, dim = -1)
@@ -252,7 +268,7 @@ class Agent:
             print("\nReal comm:", onehots_to_string(comms[0,1]))
             print("Pred comm:", onehots_to_string(pred_comms.reshape((episodes, steps, self.args.max_comm_len, self.args.comm_shape))[0,0]))
         
-        accuracy_for_prediction_error = object_loss + self.args.comm_scaler * comm_loss
+        accuracy_for_prediction_error = object_loss + comm_loss # * self.args.comm_scaler
         accuracy           = accuracy_for_prediction_error.mean()
         
         complexity_for_hidden_state = [dkl(zq_mu[:,:,layer], zq_std[:,:,layer], zp_mu[:,:,layer], zp_std[:,:,layer]).mean(-1).unsqueeze(-1) * all_masks for layer in range(self.args.layers)] 
@@ -377,15 +393,15 @@ class Agent:
                                 
         if(accuracy != None):   accuracy = accuracy.item()
         if(object_loss != None):   object_loss = object_loss.mean().item()
-        if(comm_loss != None):   comm_loss = self.args.comm_scaler * comm_loss.mean().item()
+        if(comm_loss != None):   comm_loss = comm_loss.mean().item()
         if(complexity != None): complexity = complexity.item()
         if(alpha_loss != None): alpha_loss = alpha_loss.item()
         if(actor_loss != None): actor_loss = actor_loss.item()
+        if(Q != None): Q = -Q.mean().item()
         for i in range(self.args.critics):
             if(critic_losses[i] != None): 
                 critic_losses[i] = critic_losses[i].item()
                 critic_losses[i] = log(critic_losses[i]) if critic_losses[i] > 0 else critic_losses[i]
-        losses = [accuracy, object_loss, comm_loss, complexity, alpha_loss, actor_loss, critic_losses]
         
         prediction_error_curiosity = prediction_error_curiosity.mean().item()
         hidden_state_curiosities = [hidden_state_curiosity.mean().item() for hidden_state_curiosity in hidden_state_curiosities]

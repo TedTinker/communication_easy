@@ -3,7 +3,7 @@ from random import randint, choice
 import torch
 
 from utils import default_args, color_map, shape_map, action_map, pad_zeros,\
-    string_to_onehots, onehots_to_string, multi_hot_action, print
+    string_to_onehots, onehots_to_string, multi_hot_action, action_to_string, print
 
 
 
@@ -94,7 +94,7 @@ class Task:
         return("\n\nSHAPE-COLORS:\t{}\nGOAL:\t{}\nRECOMMENDED ACTION:\t{}".format(
             ["{} {}".format(color_map[color], shape_map[shape]) for shape, color in self.current_objects], 
             onehots_to_string(self.goal_comm), 
-            self.get_recommended_action()))
+            action_to_string(self.get_recommended_action())))
 
 
 
@@ -117,7 +117,7 @@ class Task_Runner:
         done = False
         
         if(verbose):
-            print("ACTION:\t{}".format(action), end = " ")
+            print("ACTION:\t{}".format(action_to_string(action)), end = " ")
         reward, win = self.task.reward_for_action(action)
                     
         if(reward > 0): 
