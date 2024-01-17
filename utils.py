@@ -23,7 +23,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("DEVICE:", device)
 device = "cpu"
 
-#"""
 shape_map = {
     0: "pole", 
     1: "T", 
@@ -50,36 +49,7 @@ comm_map = {
     15: 'O', 16: 'P', 17: 'Q', 18: 'R', 19: 'S', 20: 'T', 21: 'U',
     22: 'V', 23: 'W', 24: 'X', 25: 'Y', 26: 'Z', 27: '.'}
 
-"""
-
-shape_map = {
-    0: "A", #"pole", 
-    1: "B", #T
-    2: "C", #L
-    3: "D", #"cross", 
-    4: "E"} #I
-color_map = {
-    0: "A", # red", 
-    1: "B", #"blue", 
-    2: "C", #"yellow", 
-    3: "D", #"green", 
-    4: "E", #"orange", 
-    5: "F"} #"purple"}
-action_map = {
-    0: "A", #"push", 
-    1: "B", #"pull", 
-    2: "C", #"lift", 
-    3: "D", #"spin-L", 
-    4: "E"} #"spin-R"}
-
-comm_map = {
-    0: ' ', 1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'E', 6: 'F', 7: '.'}
-#"""
-
-
-
 char_to_index = {v: k for k, v in comm_map.items()}
-print(char_to_index)
 
 
 
@@ -161,7 +131,7 @@ parser.add_argument('--std_min',            type=int,        default = exp(-20),
                     help='Minimum value for standard deviation.')
 parser.add_argument('--std_max',            type=int,        default = exp(2),
                     help='Maximum value for standard deviation.')
-parser.add_argument("--beta",               type=literal,    default = [0],
+parser.add_argument("--beta",               type=literal,    default = [1],
                     help='Relative importance of complexity in each layer.')
 
     # Entropy
@@ -241,13 +211,15 @@ def print(*args, **kwargs):
     kwargs["flush"] = True
     builtins.print(*args, **kwargs)
 
+# Adjusting PLT.
 font = {'family' : 'sans-serif',
         #'weight' : 'bold',
         'size'   : 22}
-
 matplotlib.rc('font', **font)
 
-    
+
+
+# Duration functions.
 start_time = datetime.datetime.now()
 
 def duration(start_time = start_time):
@@ -265,6 +237,79 @@ def estimate_total_duration(proportion_completed, start_time=start_time):
 
 
 
+# Functions for task at hand.
+def choose_task(probabilities):
+    if(len(probabilities) == 1):
+        selected_task = probabilities[0][0]
+    else:
+        tasks, weights = zip(*probabilities)
+        selected_task = choices(tasks, weights=weights, k=1)[0]
+    return selected_task
+
+def multi_hot_action(action,  args = default_args):
+    if(len(action.shape) == 1): action = action.unsqueeze(0)
+    if(len(action.shape) == 2): action = action.unsqueeze(0)
+    action = torch.as_tensor(action)
+    multi_hot = torch.zeros_like(action, dtype=torch.float32)
+    action_indices_list = []
+    object_indices_list = []
+    for episode in range(action.shape[0]):
+        episode_action_indices = []
+        episode_object_indices = []
+        for step in range(action.shape[1]):
+            action_index = torch.argmax(action[episode, step, :args.actions])
+            object_index = torch.argmax(action[episode, step, args.actions:])
+            multi_hot[episode, step, action_index] = 1
+            multi_hot[episode, step, object_index + args.actions] = 1
+            episode_action_indices.append(action_index.item())
+            episode_object_indices.append(object_index.item())
+        action_indices_list.append(torch.tensor(episode_action_indices))
+        object_indices_list.append(torch.tensor(episode_object_indices))
+    action_indices_tensor = torch.stack(action_indices_list)
+    object_indices_tensor = torch.stack(object_indices_list)
+    return multi_hot, action_indices_tensor, object_indices_tensor
+
+
+
+# For printing tensors as what they represent.
+def string_to_onehots(s):
+    s = ''.join([char.upper() if char.upper() in char_to_index else ' ' for char in s])
+    onehots = []
+    for char in s:
+        tensor = torch.zeros(len(comm_map))
+        tensor[char_to_index[char]] = 1
+        onehots.append(tensor.unsqueeze(0))
+    onehots = torch.cat(onehots, dim = 0)
+    return onehots
+
+def onehots_to_string(onehots):
+    string = ''
+    for tensor in onehots:
+        index = torch.argmax(tensor).item()
+        string += comm_map[index]
+    return string
+
+def multihots_to_string(multihots):
+    shapes = multihots[:,:len(shape_map)]
+    colors = multihots[:,len(shape_map):]
+    to_return = ""
+    for i in range(multihots.shape[0]):
+        shape_index = torch.argmax(shapes[i]).item()
+        color_index = torch.argmax(colors[i]).item()
+        to_return += "{} {}{}".format(color_map[color_index], shape_map[shape_index], "." if i+1 == multihots.shape[0] else ", ")
+    return(to_return)
+
+def action_to_string(action):
+    while(len(action.shape) > 1): action = action.squeeze(0)
+    act = action[:len(action_map)]
+    act_index = torch.argmax(act).item()
+    objects = action[len(action_map):]
+    object_index = torch.argmax(objects).item()
+    return("{} object {}.\t".format(action_map[act_index], object_index))
+
+
+
+# PyTorch functions.
 def init_weights(m):
     try:
         torch.nn.init.xavier_normal_(m.weight)
@@ -322,43 +367,6 @@ def detach_list(l):
 def memory_usage(device):
     print(device, ":", platform.node(), torch.cuda.memory_allocated(device), "out of", torch.cuda.max_memory_allocated(device))
 
-
-
-def string_to_onehots(s):
-    s = ''.join([char.upper() if char.upper() in char_to_index else ' ' for char in s])
-    onehots = []
-    for char in s:
-        tensor = torch.zeros(len(comm_map))
-        tensor[char_to_index[char]] = 1
-        onehots.append(tensor.unsqueeze(0))
-    onehots = torch.cat(onehots, dim = 0)
-    return onehots
-
-def onehots_to_string(onehots):
-    string = ''
-    for tensor in onehots:
-        index = torch.argmax(tensor).item()
-        string += comm_map[index]
-    return string
-
-def multihots_to_string(multihots):
-    shapes = multihots[:,:len(shape_map)]
-    colors = multihots[:,len(shape_map):]
-    to_return = ""
-    for i in range(multihots.shape[0]):
-        shape_index = torch.argmax(shapes[i]).item()
-        color_index = torch.argmax(colors[i]).item()
-        to_return += "{} {}{}".format(color_map[color_index], shape_map[shape_index], "." if i+1 == multihots.shape[0] else ", ")
-    return(to_return)
-
-def action_to_string(action):
-    while(len(action.shape) > 1): action = action.squeeze(0)
-    act = action[:len(action_map)]
-    act_index = torch.argmax(act).item()
-    objects = action[len(action_map):]
-    object_index = torch.argmax(objects).item()
-    return("{} object {}.\t".format(action_map[act_index], object_index))
-
 def pad_zeros(value, length):
     rows_to_add = length - value.size(-2)
     padding_shape = list(value.shape)
@@ -368,32 +376,47 @@ def pad_zeros(value, length):
     value = torch.cat([value, padding], dim=-2)
     return value
 
+# Not in use, but maybe should be. 
 def create_comm_mask(comm):
     period_index = char_to_index["."]  # Index for the period character in the one-hot encoding
     mask = torch.ones_like(comm[..., 0], dtype=torch.float32)  # Create a mask with the same shape except for the last dimension
     max_indices = comm.argmax(dim=-1)
     period_mask = torch.where(max_indices == period_index, 1, 0)
+
+    def apply_mask(mask, period_mask):
+        if period_mask.any():
+            first_period_index = period_mask.argmax()
+            mask[first_period_index+1:] = 0
+            return mask, first_period_index
+        else:
+            return mask, mask.size(0) - 1  # Return the last index if no period
+
     if len(comm.shape) == 2:  # Handling (sequence_length, len(comm_map))
-        mask[period_mask.argmax()+1:] = 0
+        mask, last_index = apply_mask(mask, period_mask)
+        last_indices = torch.tensor(last_index).expand_as(mask)
     elif len(comm.shape) == 3:  # Handling (steps, sequence_length, len(comm_map))
+        last_indices = torch.empty(comm.shape[0], dtype=torch.long)
         for step in range(comm.shape[0]):
-            mask[step, period_mask[step].argmax()+1:] = 0
+            mask[step], last_indices[step] = apply_mask(mask[step], period_mask[step])
     elif len(comm.shape) == 4:  # Handling (episodes, steps, sequence_length, len(comm_map))
+        last_indices = torch.empty((comm.shape[0], comm.shape[1]), dtype=torch.long)
         for episode in range(comm.shape[0]):
             for step in range(comm.shape[1]):
-                mask[episode, step, period_mask[episode, step].argmax()+1:] = 0
-    return mask
+                mask[episode, step], last_indices[episode, step] = apply_mask(mask[episode, step], period_mask[episode, step])
 
-def choose_task(probabilities):
-    if(len(probabilities) == 1):
-        selected_task = probabilities[0][0]
-    else:
-        tasks, weights = zip(*probabilities)
-        selected_task = choices(tasks, weights=weights, k=1)[0]
-    return selected_task
+    return mask, last_indices
 
+#example_comm = torch.stack([
+#    pad_zeros(string_to_onehots("HELLO WORLD."), args.max_comm_len),
+#    pad_zeros(string_to_onehots("GOODBYE WORLD."), args.max_comm_len),
+#    pad_zeros(string_to_onehots("YOWSERS. HI.. ."), args.max_comm_len),
+#    pad_zeros(string_to_onehots("YOWSERS"), args.max_comm_len),
+#    pad_zeros(string_to_onehots("."), args.max_comm_len),
+#    pad_zeros(string_to_onehots("ABCDEF."), args.max_comm_len)],
+#    dim = 0)
+#example_comm = example_comm.reshape((2,3,args.max_comm_len, args.comm_shape))
+#mask, last_indices = create_comm_mask(example_comm)
 
-    
 def dkl(mu_1, std_1, mu_2, std_2):
     std_1 = std_1**2
     std_2 = std_2**2
@@ -403,91 +426,6 @@ def dkl(mu_1, std_1, mu_2, std_2):
     out = (.5 * (term_1 + term_2 - term_3 - 1))
     out = torch.nan_to_num(out)
     return(out)
-
-
-
-from time import sleep
-def multi_hot_action(action,  args = default_args):
-    if(len(action.shape) == 1): action = action.unsqueeze(0)
-    if(len(action.shape) == 2): action = action.unsqueeze(0)
-    action = torch.as_tensor(action)
-    #print("\n\n")
-    #print(action)
-    multi_hot = torch.zeros_like(action, dtype=torch.float32)
-    action_indices_list = []
-    object_indices_list = []
-    for episode in range(action.shape[0]):
-        episode_action_indices = []
-        episode_object_indices = []
-        for step in range(action.shape[1]):
-            action_index = torch.argmax(action[episode, step, :args.actions])
-            object_index = torch.argmax(action[episode, step, args.actions:])
-            #print(action_index, object_index)
-            multi_hot[episode, step, action_index] = 1
-            multi_hot[episode, step, object_index + args.actions] = 1
-            episode_action_indices.append(action_index.item())
-            episode_object_indices.append(object_index.item())
-        action_indices_list.append(torch.tensor(episode_action_indices))
-        object_indices_list.append(torch.tensor(episode_object_indices))
-    action_indices_tensor = torch.stack(action_indices_list)
-    object_indices_tensor = torch.stack(object_indices_list)
-    #print(action_indices_tensor, object_indices_tensor)
-    #print("\n\n")
-    #sleep(3)
-    return multi_hot, action_indices_tensor, object_indices_tensor
-
-"""
-example_action = torch.tensor([.1, .2, .3, .4, .5, -1, -2, -3])
-example_action_2 = torch.tensor([[.1, .2, .3, .4, .5, -1, -2, -3], 
-                                 [.1, .2, .3, .4, .5, -1, -2, -3]])
-example_action_3 = torch.tensor([[[.1, .2, .3, .4, .5, -1, -2, -3],
-                                  [.1, .2, .3, .4, .5, -1, -2, -3]], 
-                                 [[.1, .2, .3, .4, .5, -1, -2, -3], 
-                                  [.1, .2, .3, .4, .5, -1, -2, -3]]])
-
-print(example_action)
-print(multi_hot_action(example_action))
-print(example_action_2)
-print(multi_hot_action(example_action_2))
-print(example_action_3)
-print(multi_hot_action(example_action_3))
-"""
-
-def select_actions_objects(action_probs, args):
-    """
-    Selects actions and objects based on the output probabilities from the Actor network.
-    
-    Parameters:
-        action_probs (Tensor): Tensor of shape (episodes, steps, actions + objects) with action probabilities.
-        args: Arguments containing actions and objects counts.
-
-    Returns:
-        Tuple[Tensor, Tensor, Tensor]: Action indices, Object indices, and log probabilities of selections.
-    """
-    episodes, steps, _ = action_probs.shape
-    action_probs, object_probs = torch.split(action_probs, [args.actions, args.objects], dim=-1)
-
-    # Create distributions
-    action_dist = dist.Categorical(action_probs)
-    object_dist = dist.Categorical(object_probs)
-
-    # Sample actions and objects
-    sampled_actions = action_dist.sample()
-    sampled_objects = object_dist.sample()
-
-    # Calculate log probabilities for entropy
-    log_probs_actions = action_dist.log_prob(sampled_actions)
-    log_probs_objects = object_dist.log_prob(sampled_objects)
-    log_probs = log_probs_actions + log_probs_objects
-
-    # Reshape for compatibility
-    sampled_actions = sampled_actions.view(episodes, steps, 1)
-    sampled_objects = sampled_objects.view(episodes, steps, 1)
-    log_probs = log_probs.view(episodes, steps, 1)
-
-    return sampled_actions, sampled_objects, log_probs
-
-
 
 class ConstrainedConv1d(nn.Conv1d):
     def forward(self, input):
@@ -517,14 +455,15 @@ class Ted_Conv1d(nn.Module):
         for Conv1d in self.Conv1ds: y.append(Conv1d(x)) 
         return(torch.cat(y, dim = -2))
     
-    
-    
 def calculate_similarity(recommended_actions, actor_actions):
-    # Flatten the tensors along the action size dimension
     recommended_actions_flat = recommended_actions.view(recommended_actions.size(0), recommended_actions.size(1), -1)
     actor_actions_flat = actor_actions.view(actor_actions.size(0), actor_actions.size(1), -1)
-
-    # Calculate cosine similarity for each step
     step_similarities = cosine_similarity(recommended_actions_flat, actor_actions_flat, dim=-1)
-
     return step_similarities
+
+
+
+
+
+
+
