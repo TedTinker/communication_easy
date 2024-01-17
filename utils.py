@@ -1,7 +1,8 @@
 #%% 
 
 # To do:
-# Make it work.
+# Make it work on Deigo.
+# Make a "generalization" check to see if it can generalize combos it hasn't seen.
 # Add double-agent. 
 
 import builtins
