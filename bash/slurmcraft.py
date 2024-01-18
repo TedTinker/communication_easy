@@ -12,7 +12,7 @@ if(type(args.arg_list) != list): args.arg_list = json.loads(args.arg_list)
 combined = "___{}___".format("+".join(args.arg_list))    
 
 import os 
-try:    os.chdir("pvrnn/bash")
+try:    os.chdir("communication_easy/bash")
 except: pass
 
 
@@ -48,8 +48,8 @@ slurm_dict = {
     "e"    : {"alpha" : "None", "curiosity" : "none"},
     "n"    : {                  "curiosity" : "prediction_error"},
     "en"   : {"alpha" : "None", "curiosity" : "prediction_error"},
-    "f"    : {                  "curiosity" : "hidden_state",  "beta" : .05},
-    "ef"   : {"alpha" : "None", "curiosity" : "hidden_state",  "beta" : .05},
+    "f"    : {                  "curiosity" : "hidden_state"},
+    "ef"   : {"alpha" : "None", "curiosity" : "hidden_state"},
     }
 
 def add_this(name, args):
@@ -70,43 +70,8 @@ def add_this(name, args):
 
 
 
-add_this("hard",   {   
-    "maze_list" :           "\"['t']\"",   
-    "epochs" :              "\"[500]\"",     
-    "time_scales" :         "\"[1]\"",
-    "image_size" :          8,
-    "max_steps" :           30, 
-    "min_speed" :           0,
-    "max_speed" :           100,
-    "default_reward" :      "\"[(1,1)]\"",
-    "better_reward" :       "\"[(1,10),(1,0)]\"",
-    "prediction_error_eta" : 1,  
-    "hidden_state_eta" :    "\"[1]\"", 
-    "beta" :                "\"[.03]\"", 
-    "target_entropy" :      -1,
-    "agents_per_pos_list" : 36})
-    
-add_this("many",   {    
-    "maze_list" :           "\"['1', '2', '3']\"", 
-    "epochs" :              "\"[500, 2000, 4000]\"", 
-    "time_scales" :         "\"[1]\"",
-    "image_size" :          8,
-    "max_steps" :           30, 
-    "min_speed" :           0,
-    "max_speed" :           200,
-    "default_reward" :      "\"[(1,-.5)]\"",
-    "better_reward" :       "\"[(1,10)]\"",
-    "prediction_error_eta" :1,
-    "hidden_state_eta" :    "\"[1]\"",
-    "beta" :                "\"[.03]\"",
-    "agents_per_pos_list" : 36, 
-    "target_entropy" :      -1
-    })
-    
+add_this("def",   {})
 
-
-#add_this("rand",   {"randomness" :          .25}) # .5 for hard, .25 for many
-add_this("rand",   {"random_by_choice" :  True})
 
 new_slurm_dict = {}
 for key, value in slurm_dict.items():
@@ -132,8 +97,8 @@ def all_like_this(this):
 
         
 if(__name__ == "__main__" and args.arg_list == []):
-    #for key, value in slurm_dict.items(): print(key, ":", value,"\n")
-    interesting = ["d_hard_{}".format(i) for i in [1,4,7,8,10]]
+    for key, value in slurm_dict.items(): print(key, ":", value,"\n")
+    interesting = []
     for this in interesting:
         print("{} : {}".format(this,slurm_dict[this]))
 
@@ -173,7 +138,7 @@ if(__name__ == "__main__" and args.arg_list != []):
 {}
 #SBATCH --ntasks={}
 {}
-singularity exec {} maze.sif python pvrnn/main.py --comp {} --arg_name {} {} --agents $agents_per_job --previous_agents $previous_agents
+singularity exec {} maze.sif python communication_easy/main.py --comp {} --arg_name {} {} --agents $agents_per_job --previous_agents $previous_agents
 """.format(partition, max_cpus, module, nv, args.comp, name, get_args(name))[2:])
             
 
@@ -183,7 +148,7 @@ singularity exec {} maze.sif python pvrnn/main.py --comp {} --arg_name {} {} --a
 """
 {}
 {}
-singularity exec {} maze.sif python pvrnn/finish_dicts.py --comp {} --arg_title {} --arg_name finishing_dictionaries
+singularity exec {} maze.sif python communication_easy/finish_dicts.py --comp {} --arg_title {} --arg_name finishing_dictionaries
 """.format(partition, module, nv, args.comp, combined)[2:])
         
     with open("plotting.slurm", "w") as f:
@@ -191,7 +156,7 @@ singularity exec {} maze.sif python pvrnn/finish_dicts.py --comp {} --arg_title 
 """
 {}
 {}
-singularity exec {} maze.sif python pvrnn/plotting.py --comp {} --arg_title {} --arg_name plotting
+singularity exec {} maze.sif python communication_easy/plotting.py --comp {} --arg_title {} --arg_name plotting
 """.format(partition, module, nv, args.comp, combined)[2:])
         
     with open("plotting_pred.slurm", "w") as f:
@@ -199,7 +164,7 @@ singularity exec {} maze.sif python pvrnn/plotting.py --comp {} --arg_title {} -
 """
 {}
 {}
-singularity exec {} maze.sif python pvrnn/plotting_pred.py --comp {} --arg_title {} --arg_name plotting_predictions
+singularity exec {} maze.sif python communication_easy/plotting_pred.py --comp {} --arg_title {} --arg_name plotting_predictions
 """.format(partition, module, nv, args.comp, combined)[2:])
         
     with open("plotting_pos.slurm", "w") as f:
@@ -207,7 +172,7 @@ singularity exec {} maze.sif python pvrnn/plotting_pred.py --comp {} --arg_title
 """
 {}
 {}
-singularity exec {} maze.sif python pvrnn/plotting_pos.py --comp {} --arg_title {} --arg_name plotting_positions
+singularity exec {} maze.sif python communication_easy/plotting_pos.py --comp {} --arg_title {} --arg_name plotting_positions
 """.format(partition, module, nv, args.comp, combined)[2:])
         
     with open("plotting_p_values.slurm", "w") as f:
@@ -215,7 +180,7 @@ singularity exec {} maze.sif python pvrnn/plotting_pos.py --comp {} --arg_title 
 """
 {}
 {}
-singularity exec {} maze.sif python pvrnn/plotting_p_val.py --comp {} --arg_title {} --arg_name plotting_p_values
+singularity exec {} maze.sif python communication_easy/plotting_p_val.py --comp {} --arg_title {} --arg_name plotting_p_values
 """.format(partition, module, nv, args.comp, combined)[2:])
         
     with open("combine_plots.slurm", "w") as f:
@@ -223,7 +188,7 @@ singularity exec {} maze.sif python pvrnn/plotting_p_val.py --comp {} --arg_titl
 """
 {}
 {}
-singularity exec {} maze.sif python pvrnn/combine_plots.py --comp {} --arg_title {} --arg_name combining_plots
+singularity exec {} maze.sif python communication_easy/combine_plots.py --comp {} --arg_title {} --arg_name combining_plots
 """.format(partition, module, nv, args.comp, combined)[2:])
 # %%
 

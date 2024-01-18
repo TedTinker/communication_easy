@@ -7,6 +7,8 @@ import torch.optim as optim
 
 import numpy as np
 from math import log
+from itertools import accumulate
+from copy import deepcopy
 import matplotlib.pyplot as plt
 
 from utils import default_args, dkl, print, choose_task, calculate_similarity, onehots_to_string, multihots_to_string
@@ -19,11 +21,11 @@ from models import Actor, Critic
 
 class Agent:
     
-    def __init__(self, args = default_args):
-                
+    def __init__(self, i, args = default_args):
+        
+        self.agent_num = i
         self.args = args
         self.episodes = 0 ; self.epochs = 0 ; self.steps = 0
-        print(self.args.task_probabilities)
         self.task_probabilities = self.args.task_probabilities[0]
         
         self.tasks = {
@@ -69,14 +71,24 @@ class Agent:
         
         
         
-    def training(self):        
+    def training(self, q = None):        
+        self.pred_episodes()
+        self.pos_episodes()
+        self.save_agent()
         while(True):
             cumulative_epochs = 0
+            # prev_task = 
             for i, epochs in enumerate(self.args.epochs): 
                 cumulative_epochs += epochs
                 if(self.epochs < cumulative_epochs): 
                     self.task_probabilities = self.args.task_probabilities[i] 
                     break
+            #if(prev_task != self.task_name): 
+            #    self.pred_episodes()
+            #    self.pos_episodes()
+            #    self.maze = Hard_Maze(self.maze_name, args = self.args)
+            #    self.pred_episodes()
+            #    self.pos_episodes()
             if(self.episodes % 100 == 0):
                 self.plot_stuff()
                 verbose = True
@@ -84,7 +96,31 @@ class Agent:
             else:
                 verbose = False
             self.training_episode(verbose = verbose)
+            percent_done = str(self.epochs / sum(self.args.epochs))
+            if(q != None):
+                q.put((self.agent_num, percent_done))
             if(self.epochs >= sum(self.args.epochs)): break
+            if(self.epochs % self.args.epochs_per_pred_list == 0): self.pred_episodes()
+            if(self.epochs % self.args.epochs_per_pos_list == 0): self.pos_episodes()
+            if(self.epochs % self.args.epochs_per_agent_list == 0): self.save_agent()
+        self.plot_dict["rewards"] = list(accumulate(self.plot_dict["rewards"]))
+        self.pred_episodes()
+        self.pos_episodes()
+        self.save_agent()
+        
+        self.min_max_dict = {key : [] for key in self.plot_dict.keys()}
+        for key in self.min_max_dict.keys():
+            if(not key in ["args", "arg_title", "arg_name", "pred_lists", "pos_lists", "agent_lists", "spot_names", "steps"]):
+                minimum = None ; maximum = None 
+                l = self.plot_dict[key]
+                l = deepcopy(l)
+                l = [_ for _ in l if _ != None]
+                if(l != []):
+                    if(  minimum == None):  minimum = min(l)
+                    elif(minimum > min(l)): minimum = min(l)
+                    if(  maximum == None):  maximum = max(l) 
+                    elif(maximum < max(l)): maximum = max(l)
+                self.min_max_dict[key] = (minimum, maximum)
         
     def plot_stuff(self):
         columns = 4
@@ -199,6 +235,64 @@ class Agent:
         self.plot_dict["rewards"].append(reward)
         self.plot_dict["wins"].append(win)
         self.episodes += 1
+        
+        
+        
+    def pred_episodes(self):
+        pass
+        """
+        with torch.no_grad():
+            if(self.args.agents_per_pred_list != -1 and self.agent_num > self.args.agents_per_pred_list): return
+            pred_lists = []
+            for episode in range(self.args.episodes_in_pred_list):
+                done = False ; prev_a = torch.zeros((1, 1, action_size))
+                h_actor = torch.zeros((1, 1, self.args.hidden_size))
+                h_q     = torch.zeros((1, 1, self.args.hidden_size))
+                self.maze.begin()
+                o, s = self.maze.obs()
+                pred_list = [(None, (o.squeeze(0), s.squeeze(0)), (None, None), (None, None))]
+                for step in range(self.args.max_steps):
+                    if(not done): 
+                        o, s = self.maze.obs()
+                        a, h_actor, _, _, done, action_name = self.step_in_episode(prev_a, h_actor, push = False, verbose = False)
+                        (zp_mu, zp_std), (zq_mu, zq_std), h_q_p1 = self.forward(o, s, prev_a, h_q)
+                        (rgbd_mu_pred_p, pred_rgbd_p), (spe_mu_pred_p, pred_spe_p) = self.forward.get_preds(a, zp_mu, zp_std, h_q, quantity = self.args.samples_per_pred)
+                        (rgbd_mu_pred_q, pred_rgbd_q), (spe_mu_pred_q, pred_spe_q) = self.forward.get_preds(a, zq_mu, zq_std, h_q, quantity = self.args.samples_per_pred)
+                        pred_rgbd_p = [pred.squeeze(0).squeeze(0) for pred in pred_rgbd_p] ; pred_rgbd_q = [pred.squeeze(0).squeeze(0) for pred in pred_rgbd_q]
+                        pred_spe_p = [pred.squeeze(0).squeeze(0) for pred in pred_spe_p]   ; pred_spe_q = [pred.squeeze(0).squeeze(0) for pred in pred_spe_q]
+                        o, s = self.maze.obs()
+                        pred_list.append((
+                            action_name, (o.squeeze(0), s.squeeze(0)), 
+                            (pred_rgbd_p, pred_spe_p), 
+                            (pred_rgbd_q, pred_spe_q)))
+                        prev_a = a ; h_q = h_q_p1
+                pred_lists.append(pred_list)
+            self.plot_dict["pred_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, self.maze.name)] = pred_lists
+        """
+        
+    def pos_episodes(self):
+        pass 
+        """
+        if(self.args.agents_per_pos_list != -1 and self.agent_num > self.args.agents_per_pos_list): return
+        pos_lists = []
+        for episode in range(self.args.episodes_in_pos_list):
+            done = False ; prev_a = torch.zeros((1, 1, action_size))
+            h_actor = torch.zeros((1, 1, self.args.hidden_size))
+            self.maze.begin()
+            pos_list = [self.maze_name, self.maze.maze.get_pos_yaw_spe()[0]]
+            for step in range(self.args.max_steps):
+                if(not done): prev_a, h_actor, _, _, done, _ = self.step_in_episode(prev_a, h_actor, push = False, verbose = False)
+                pos_list.append(self.maze.maze.get_pos_yaw_spe()[0])
+            pos_lists.append(pos_list)
+        self.plot_dict["pos_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, self.maze.name)] = pos_lists
+        """
+        
+        
+        
+    def save_agent(self):
+        pass
+        #if(self.args.agents_per_agent_list != -1 and self.agent_num > self.args.agents_per_agent_list): return
+        #self.plot_dict["agent_lists"]["{}_{}".format(self.agent_num, self.epochs)] = deepcopy(self.state_dict())
     
     
     

@@ -2,9 +2,11 @@
 
 # To do:
 # Make it work on Deigo.
+# Fix forward-collapse.
 # Make a "generalization" check to see if it can generalize combos it hasn't seen.
 # Add double-agent. 
 
+import os
 import builtins
 import datetime 
 import matplotlib
@@ -17,6 +19,8 @@ from random import choices
 from torch.distributions import Normal
 import torch.distributions as dist
 from torch.nn.functional import cosine_similarity
+
+if(os.getcwd().split("/")[-1] != "communication_easy"): os.chdir("communication_easy")
 
 torch.set_printoptions(precision=3, sci_mode=False)
 
@@ -59,6 +63,18 @@ def literal(arg_string): return(ast.literal_eval(arg_string))
 parser = argparse.ArgumentParser()
 
     # Meta 
+parser.add_argument("--arg_title",          type=str,        default = "default",
+                    help='Title of argument-set containign all non-default arguments.') 
+parser.add_argument("--arg_name",           type=str,        default = "default",
+                    help='Title of argument-set for human-understanding.') 
+parser.add_argument("--agents",             type=int,        default = 36,
+                    help='How many agents are trained in this job?')
+parser.add_argument("--previous_agents",    type=int,        default = 0,
+                    help='How many agents with this argument-set are trained in previous jobs?')
+parser.add_argument("--init_seed",          type=float,      default = 777,
+                    help='Random seed.')
+parser.add_argument('--comp',               type=str,        default = "deigo",
+                    help='Cluster name (deigo or saion).')
 parser.add_argument('--device',             type=str,        default = device,
                     help='Which device to use for Torch.')
 
@@ -92,7 +108,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
 
     # Training
-parser.add_argument('--epochs',             type=literal,    default = [10000],
+parser.add_argument('--epochs',             type=literal,    default = [3000],
                     help='List of how many epochs to train in each maze.')
 parser.add_argument('--batch_size',         type=int,        default = 128, 
                     help='How many episodes are sampled for each epoch.')       
@@ -205,6 +221,61 @@ for arg_set in [default_args, args]:
     arg_set.beta = extend_list_to_match_length(arg_set.beta, max_length, 0)
     arg_set.hidden_state_eta = extend_list_to_match_length(arg_set.hidden_state_eta, max_length, 0)
     arg_set.layers = len(arg_set.time_scales)
+    for arg in vars(arg_set):
+        if(getattr(arg_set, arg) == "None"):  arg_set.arg = None
+        if(getattr(arg_set, arg) == "True"):  arg_set.arg = True
+        if(getattr(arg_set, arg) == "False"): arg_set.arg = False
+        
+args_not_in_title = ["arg_title", "id", "agents", "previous_agents", "init_seed", "keep_data", "epochs_per_pred_list", "episodes_in_pred_list", "agents_per_pred_list", "epochs_per_pos_list", "episodes_in_pos_list", "agents_per_pos_list"]
+def get_args_title(default_args, args):
+    if(args.arg_title[:3] == "___"): return(args.arg_title)
+    name = "" ; first = True
+    arg_list = list(vars(default_args).keys())
+    arg_list.insert(0, arg_list.pop(arg_list.index("arg_name")))
+    for arg in arg_list:
+        if(arg in args_not_in_title): pass 
+        else: 
+            default, this_time = getattr(default_args, arg), getattr(args, arg)
+            if(this_time == default): pass
+            elif(arg == "arg_name"):
+                name += "{} (".format(this_time)
+            else: 
+                if first: first = False
+                else: name += ", "
+                name += "{}: {}".format(arg, this_time)
+    if(name == ""): name = "default" 
+    else:           name += ")"
+    if(name.endswith(" ()")): name = name[:-3]
+    parts = name.split(',')
+    name = "" ; line = ""
+    for i, part in enumerate(parts):
+        if(len(line) > 50 and len(part) > 2): name += line + "\n" ; line = ""
+        line += part
+        if(i+1 != len(parts)): line += ","
+    name += line
+    return(name)
+
+args.arg_title = get_args_title(default_args, args)
+
+try: os.mkdir("saved")
+except: pass
+folder = "saved/" + args.arg_name
+if(args.arg_title[:3] != "___" and not args.arg_name in ["default", "finishing_dictionaries", "plotting", "plotting_predictions", "plotting_positions"]):
+    try: os.mkdir(folder)
+    except: pass
+    try: os.mkdir("saved/thesis_pics")
+    except: pass
+    try: os.mkdir("saved/thesis_pics/final")
+    except: pass
+if(default_args.alpha == "None"): default_args.alpha = None
+if(args.alpha == "None"):         args.alpha = None
+
+if(args == default_args): print("Using default arguments.")
+else:
+    for arg in vars(default_args):
+        default, this_time = getattr(default_args, arg), getattr(args, arg)
+        if(this_time == default): pass
+        else: print("{}:\n\tDefault:\t{}\n\tThis time:\t{}".format(arg, default, this_time))
 
 
 
