@@ -7,6 +7,8 @@
 # Add double-agent. 
 
 import os
+import pickle
+from time import sleep
 import builtins
 import datetime 
 import matplotlib
@@ -86,13 +88,13 @@ parser.add_argument('--max_steps',          type=int,        default = 3,
                     help='How many steps the agent can make in one episode.')
 parser.add_argument('--step_lim_punishment',type=float,      default = -1,
                     help='Extrinsic punishment for taking max_steps steps.')
-parser.add_argument('--action_reward',      type=float,     default = 1,
+parser.add_argument('--action_reward',      type=float,     default = 0,
                     help='Extrinsic reward for choosing incorrect action.') 
-parser.add_argument('--shape_reward',       type=float,     default = 1,
+parser.add_argument('--shape_reward',       type=float,     default = 0,
                     help='Extrinsic reward for choosing incorrect shape.') 
-parser.add_argument('--color_reward',       type=float,     default = 1,
+parser.add_argument('--color_reward',       type=float,     default = 0,
                     help='Extrinsic reward for choosing incorrect color.')  
-parser.add_argument('--correct_reward',     type=float,     default = 1,
+parser.add_argument('--correct_reward',     type=float,     default = 5,
                     help='Extrinsic reward for choosing incorrect action, shape, and color.') 
 parser.add_argument('--step_cost',          type=float,      default = .9,
                     help='How much extrinsic rewards for exiting are reduced per step.')
@@ -108,7 +110,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
 
     # Training
-parser.add_argument('--epochs',             type=literal,    default = [3000],
+parser.add_argument('--epochs',             type=literal,    default = [2000],
                     help='List of how many epochs to train in each maze.')
 parser.add_argument('--batch_size',         type=int,        default = 128, 
                     help='How many episodes are sampled for each epoch.')       
@@ -152,7 +154,7 @@ parser.add_argument("--beta",               type=literal,    default = [1],
                     help='Relative importance of complexity in each layer.')
 
     # Entropy
-parser.add_argument("--alpha",              type=str,        default = 0,
+parser.add_argument("--alpha",              type=literal,    default = 0,
                     help='Nonnegative value, how much to consider entropy. Set to None to use target_entropy.')        
 parser.add_argument("--target_entropy",     type=float,      default = -2,
                     help='Target for choosing alpha if alpha set to None. Recommended: negative size of action-space.')      
@@ -164,9 +166,9 @@ parser.add_argument("--curiosity",          type=str,        default = "none",
                     help='Which kind of curiosity: none, prediction_error, or hidden_state.')  
 parser.add_argument("--dkl_max",            type=float,      default = 1,
                     help='Maximum value for clamping Kullback-Liebler divergence for hidden_state curiosity.')        
-parser.add_argument("--prediction_error_eta",          type=float,      default = 1,
+parser.add_argument("--prediction_error_eta", type=float,    default = 1,
                     help='Nonnegative value, how much to consider prediction_error curiosity.')    
-parser.add_argument("--hidden_state_eta",           type=literal,    default = [1],
+parser.add_argument("--hidden_state_eta",   type=literal,    default = [1],
                     help='Nonnegative valued, how much to consider hidden_state curiosity in each layer.')       
 
     # Imitation
@@ -221,10 +223,11 @@ for arg_set in [default_args, args]:
     arg_set.beta = extend_list_to_match_length(arg_set.beta, max_length, 0)
     arg_set.hidden_state_eta = extend_list_to_match_length(arg_set.hidden_state_eta, max_length, 0)
     arg_set.layers = len(arg_set.time_scales)
-    for arg in vars(arg_set):
-        if(getattr(arg_set, arg) == "None"):  arg_set.arg = None
-        if(getattr(arg_set, arg) == "True"):  arg_set.arg = True
-        if(getattr(arg_set, arg) == "False"): arg_set.arg = False
+    #for arg in vars(arg_set):
+    #    print(arg)
+    #    if(getattr(arg_set, arg) == "None"):  arg_set.arg = None
+    #    if(getattr(arg_set, arg) == "True"):  arg_set.arg = True
+    #    if(getattr(arg_set, arg) == "False"): arg_set.arg = False
         
 args_not_in_title = ["arg_title", "id", "agents", "previous_agents", "init_seed", "keep_data", "epochs_per_pred_list", "episodes_in_pred_list", "agents_per_pred_list", "epochs_per_pos_list", "episodes_in_pos_list", "agents_per_pos_list"]
 def get_args_title(default_args, args):
@@ -535,7 +538,96 @@ def calculate_similarity(recommended_actions, actor_actions):
 
 
 
+# For loading and plotting in final files.
+real_names = {
+    "d"  : "No Entropy, No Curiosity",
+    "e"  : "Entropy",
+    "n"  : "Prediction Error Curiosity",
+    "f"  : "Hidden State Curiosity",
+    "i"  : "Imitation",
+    "en" : "Entropy and Prediction Error Curiosity",
+    "ef" : "Entropy and Hidden State Curiosity",
+    "ei" : "Entropy and Imitation",
+    "ni" : "Prediction Error Curiosity and Imitation",
+    "fi" : "Hidden State Curiosity and Imitation",
+    "eni" : "Entropy, Prediction Error Curiosity, and Imitation",
+    "efi" : "Entropy, Hidden State Curiosity, and Imitation",
+}
 
+def add_this(name):
+    keys, values = [], []
+    for key, value in real_names.items(): keys.append(key) ; values.append(value)
+    for key, value in zip(keys, values):  
+        new_key = key + "_" + name 
+        real_names[new_key] = value
+add_this("hard")
+add_this("many")
+
+short_real_names = {
+    "d"  : "N",
+    "e"  : "E",
+    "n"  : "P",
+    "f"  : "H",
+    "i"  : "I",
+    "en" : "EP",
+    "ef" : "EH",
+    "ei" : "EI",
+    "ni" : "PI",
+    "fi" : "HI",
+    "eni" : "EPI",
+    "efi" : "EHI",
+}
+
+
+
+def load_dicts(args):
+    if(os.getcwd().split("/")[-1] != "saved"): os.chdir("saved")
+    plot_dicts = [] ; min_max_dicts = []
+        
+    complete_order = args.arg_title[3:-3].split("+")
+    order = [o for o in complete_order if not o in ["empty_space", "break"]]
+    
+    for name in order:
+        got_plot_dicts = False ; got_min_max_dicts = False
+        while(not got_plot_dicts):
+            try:
+                with open(name + "/" + "plot_dict.pickle", "rb") as handle: 
+                    plot_dicts.append(pickle.load(handle)) ; got_plot_dicts = True
+            except: print("Stuck trying to get {}'s plot_dicts...".format(name)) ; sleep(1)
+        while(not got_min_max_dicts):
+            try:
+                with open(name + "/" + "min_max_dict.pickle", "rb") as handle: 
+                    min_max_dicts.append(pickle.load(handle)) ; got_min_max_dicts = True 
+            except: print("Stuck trying to get {}'s min_max_dicts...".format(name)) ; sleep(1)
+    
+    min_max_dict = {}
+    for key in plot_dicts[0].keys():
+        if(not key in ["args", "arg_title", "arg_name", "pred_lists", "pos_lists", "agents_lists", "spot_names", "steps"]):
+            minimum = None ; maximum = None
+            for mm_dict in min_max_dicts:
+                if(mm_dict[key] != (None, None)):
+                    if(minimum == None):             minimum = mm_dict[key][0]
+                    elif(minimum > mm_dict[key][0]): minimum = mm_dict[key][0]
+                    if(maximum == None):             maximum = mm_dict[key][1]
+                    elif(maximum < mm_dict[key][1]): maximum = mm_dict[key][1]
+            min_max_dict[key] = (minimum, maximum)
+            
+    final_complete_order = [] ; final_plot_dicts = []
+
+    for arg_name in complete_order: 
+        if(arg_name in ["break", "empty_space"]): 
+            final_complete_order.append(arg_name)
+        else:
+            for plot_dict in plot_dicts:
+                if(plot_dict["args"].arg_name == arg_name):    
+                    final_complete_order.append(arg_name) 
+                    final_plot_dicts.append(plot_dict)
+                    
+    while(len(final_complete_order) > 0 and final_complete_order[0] in ["break", "empty_space"]): 
+        final_complete_order.pop(0)              
+    
+    return(plot_dicts, min_max_dict, complete_order, final_plot_dicts)
+# %%
 
 
 

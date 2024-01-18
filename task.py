@@ -25,6 +25,7 @@ class Task:
         self.args = args
         
     def begin(self, verbose = False):
+        self.solved = False
         self.current_objects = []
         self.goal = []
         obj_list = []
@@ -52,12 +53,11 @@ class Task:
         self.goal_text = "{} {} {}.".format(action_map[action], color_map[color], shape_map[shape])
         self.goal_comm = string_to_onehots(self.goal_text)
         self.goal_comm = pad_zeros(self.goal_comm, self.args.max_comm_len)
-
         
     def give_observation(self):
         return(
             self.current_objects_tensor, 
-            self.goal_comm if self.parent else None)
+            pad_zeros(string_to_onehots("CORRECT."), self.args.max_comm_len) if self.solved else self.goal_comm if self.parent else None)
     
     def reward_for_action(self, action):
         _, action_index, object_index = multi_hot_action(action, self.args)
@@ -77,6 +77,8 @@ class Task:
             object_color == goal_color):
             reward += self.args.correct_reward
             win = 1
+        if(win == 1): 
+            self.solved = True
         return(reward, win)
     
     def get_recommended_action(self):

@@ -44,13 +44,22 @@ def expand_args(name, args):
     return(name, combos)
 
 slurm_dict = {
-    "d"    : {}, 
-    "e"    : {"alpha" : "None", "curiosity" : "none"},
-    "n"    : {                  "curiosity" : "prediction_error"},
-    "en"   : {"alpha" : "None", "curiosity" : "prediction_error"},
-    "f"    : {                  "curiosity" : "hidden_state"},
-    "ef"   : {"alpha" : "None", "curiosity" : "hidden_state"},
+    "d"     : {}, 
+    "e"     : {"alpha" : "None"},
+    "n"     : {                     "curiosity" : "prediction_error"},
+    "f"     : {                     "curiosity" : "hidden_state"},
+    "i"     : {                                                         "delta" : 5},
+    "en"    : {"alpha" : "None",    "curiosity" : "prediction_error"},
+    "ef"    : {"alpha" : "None",    "curiosity" : "hidden_state"},
+    "ei"    : {"alpha" : "None",                                        "delta" : 5},
+    "ni"    : {                     "curiosity" : "prediction_error",   "delta" : 5},
+    "fi"    : {                     "curiosity" : "hidden_state",       "delta" : 5},
+    "eni"   : {"alpha" : "None",    "curiosity" : "prediction_error",   "delta" : 5},
+    "efi"   : {"alpha" : "None",    "curiosity" : "hidden_state",       "delta" : 5},
     }
+
+
+
 
 def add_this(name, args):
     keys, values = [], []

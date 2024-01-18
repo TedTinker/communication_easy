@@ -59,15 +59,28 @@ class Agent:
         
         self.plot_dict = {
             "args" : self.args,
-            "pred_lists" : {}, "pos_lists" : {}, 
+            "arg_title" : args.arg_title,
+            "arg_name" : args.arg_name,
+            "pred_lists" : {}, 
+            "pos_lists" : {}, 
             "agent_lists" : {"forward" : PVRNN, "actor" : Actor, "critic" : Critic},
-            "wins" : [], "rewards" : [], "spot_names" : [], "steps" : [],
-            "accuracy" : [], "object_loss" : [], "comm_loss" : [], "complexity" : [],
-            "alpha" : [], "actor" : [], 
+            "wins" : [], 
+            "rewards" : [], 
+            "steps" : [],
+            "accuracy" : [], 
+            "object_loss" : [], 
+            "comm_loss" : [], 
+            "complexity" : [],
+            "alpha" : [], 
+            "actor" : [], 
             "critics" : [], 
-            "extrinsic" : [], "q" : [], "intrinsic_curiosity" : [], 
-            "intrinsic_entropy" : [], "intrinsic_imitation" : [],
-            "prediction_error" : [], "hidden_state" : [[] for _ in range(self.args.layers)]}
+            "extrinsic" : [], 
+            "q" : [], 
+            "intrinsic_curiosity" : [], 
+            "intrinsic_entropy" : [], 
+            "intrinsic_imitation" : [],
+            "prediction_error" : [], 
+            "hidden_state" : [[] for _ in range(self.args.layers)]}
         
         
         
@@ -89,13 +102,7 @@ class Agent:
             #    self.maze = Hard_Maze(self.maze_name, args = self.args)
             #    self.pred_episodes()
             #    self.pos_episodes()
-            if(self.episodes % 100 == 0):
-                self.plot_stuff()
-                verbose = True
-                print("EPOCH {}, EPISODE {}, TASKS {}\n".format(self.epochs, self.episodes, self.task_probabilities))
-            else:
-                verbose = False
-            self.training_episode(verbose = verbose)
+            self.training_episode()
             percent_done = str(self.epochs / sum(self.args.epochs))
             if(q != None):
                 q.put((self.agent_num, percent_done))
@@ -121,63 +128,16 @@ class Agent:
                     if(  maximum == None):  maximum = max(l) 
                     elif(maximum < max(l)): maximum = max(l)
                 self.min_max_dict[key] = (minimum, maximum)
-        
-    def plot_stuff(self):
-        columns = 4
-        fig, axs = plt.subplots(nrows=1, ncols=columns, figsize=(5 * columns, 5))
-
-        # First Column
-        ax = axs[0]
-        ax.plot(self.plot_dict["wins"])
-        try:
-            rolling_average = np.convolve(self.plot_dict["wins"], np.ones(100)/100, mode='valid')  # Rolling average with a window of 100
-            ax.plot(rolling_average)
-        except: pass
-        ax.set_ylabel("Wins")
-        ax.set_xlabel("Epochs")
-        ax.set_title("Wins")
-
-        # Second Column
-        ax = axs[1]
-        ax.plot(self.plot_dict["accuracy"], color = "red")
-        ax.plot(self.plot_dict["object_loss"], color = "green")
-        ax.plot(self.plot_dict["comm_loss"], color = "blue")
-        ax.plot(self.plot_dict["complexity"], color = "purple")
-        ax.set_ylabel("Value")
-        ax.set_xlabel("Epochs")
-        ax.set_title("Accuracy and Complexity")
-
-        # Third Column
-        ax = axs[2]
-        ax.plot([actor_loss for actor_loss in self.plot_dict["actor"] if actor_loss != None], color = "red")
-        ax.plot([alpha_loss for alpha_loss in self.plot_dict["intrinsic_entropy"] if alpha_loss != None], color = "green")
-        ax.plot([delta_loss for delta_loss in self.plot_dict["intrinsic_imitation"] if delta_loss != None], color = "blue")
-        ax.plot([q for q in self.plot_dict["q"] if q != None], color = "purple")
-        ax.set_ylabel("Value")
-        ax.set_xlabel("Epochs")
-        ax.set_title("Actor")
-
-        # Fourth Column
-        ax = axs[3]
-        for i in range(self.args.critics):
-            loss_list = [sublist[i] for sublist in self.plot_dict["critics"]]
-            ax.plot(loss_list)
-        ax.set_ylabel("Value")
-        ax.set_xlabel("Epochs")
-        ax.set_title("Critics")
-
-        plt.show()
-        plt.close()
                 
     
     
-    def step_in_episode(self, prev_action, hq_m1, ha_m1, push, verbose):
+    def step_in_episode(self, prev_action, hq_m1, ha_m1, push):
         with torch.no_grad():
             obj, comm = self.task.obs()
             recommended_action = self.task.task.get_recommended_action()
             (_, _), (_, _), hq = self.forward.bottom_to_top_step(hq_m1, obj, comm, prev_action) 
             action, _, ha = self.actor(obj, comm, prev_action, hq[:,:,0].clone().detach(), ha_m1) 
-            reward, done, win = self.task.action(action, verbose)
+            reward, done, win = self.task.action(action)
             next_obj, next_comm = self.task.obs()
             if(push): 
                 self.memory.push(
@@ -194,24 +154,25 @@ class Agent:
             
            
     
-    def training_episode(self, push = True, verbose = False):
-        done = False ; steps = 0
+    def training_episode(self, push = True):
+        done = False
+        total_reward = 0
+        steps = 0
         prev_action = torch.zeros((1, 1, self.args.action_shape))
         hq = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
         ha = torch.zeros((1, 1, self.args.hidden_size)) 
         
         selected_task = choose_task(self.task_probabilities)
         self.task = self.task_runners[selected_task]
-        if(verbose):
-            print("TASK:", selected_task)
-        self.task.begin(verbose)        
+        self.task.begin()        
         for step in range(self.args.max_steps):
             self.steps += 1 
             if(not done):
                 steps += 1
-                prev_action, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push, verbose)
+                prev_action, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push)
+                total_reward += reward
             if(self.steps % self.args.steps_per_epoch == 0):
-                plot_data = self.epoch(self.args.batch_size, verbose)
+                plot_data = self.epoch(self.args.batch_size)
                 if(plot_data == False): pass
                 else:
                     accuracy, object_loss, comm_loss, complexity, alpha, actor, critics, e, q, ic, ie, ii, prediction_error, hidden_state = plot_data
@@ -232,7 +193,7 @@ class Agent:
                         for layer, f in enumerate(hidden_state):
                             self.plot_dict["hidden_state"][layer].append(f)    
         self.plot_dict["steps"].append(steps)
-        self.plot_dict["rewards"].append(reward)
+        self.plot_dict["rewards"].append(total_reward)
         self.plot_dict["wins"].append(win)
         self.episodes += 1
         
@@ -254,7 +215,7 @@ class Agent:
                 for step in range(self.args.max_steps):
                     if(not done): 
                         o, s = self.maze.obs()
-                        a, h_actor, _, _, done, action_name = self.step_in_episode(prev_a, h_actor, push = False, verbose = False)
+                        a, h_actor, _, _, done, action_name = self.step_in_episode(prev_a, h_actor, push = False)
                         (zp_mu, zp_std), (zq_mu, zq_std), h_q_p1 = self.forward(o, s, prev_a, h_q)
                         (rgbd_mu_pred_p, pred_rgbd_p), (spe_mu_pred_p, pred_spe_p) = self.forward.get_preds(a, zp_mu, zp_std, h_q, quantity = self.args.samples_per_pred)
                         (rgbd_mu_pred_q, pred_rgbd_q), (spe_mu_pred_q, pred_spe_q) = self.forward.get_preds(a, zq_mu, zq_std, h_q, quantity = self.args.samples_per_pred)
@@ -281,7 +242,7 @@ class Agent:
             self.maze.begin()
             pos_list = [self.maze_name, self.maze.maze.get_pos_yaw_spe()[0]]
             for step in range(self.args.max_steps):
-                if(not done): prev_a, h_actor, _, _, done, _ = self.step_in_episode(prev_a, h_actor, push = False, verbose = False)
+                if(not done): prev_a, h_actor, _, _, done, _ = self.step_in_episode(prev_a, h_actor, push = False)
                 pos_list.append(self.maze.maze.get_pos_yaw_spe()[0])
             pos_lists.append(pos_list)
         self.plot_dict["pos_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, self.maze.name)] = pos_lists
@@ -296,7 +257,7 @@ class Agent:
     
     
     
-    def epoch(self, batch_size, verbose):
+    def epoch(self, batch_size):
                                 
         batch = self.memory.sample(batch_size)
         if(batch == False): return(False)
@@ -346,10 +307,6 @@ class Agent:
         object_loss = shape_loss.mean(-1).unsqueeze(-1) * masks
         object_loss += color_loss.mean(-1).unsqueeze(-1) * masks
         
-        if(verbose):
-            print("\nReal Objects:", multihots_to_string(objects[0,1]))
-            print("Pred Objects:", multihots_to_string(pred_objects[0,0]))
-        
         real_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
         real_comms = torch.argmax(real_comms, dim = -1)
         pred_comms = pred_comms.reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
@@ -357,10 +314,6 @@ class Agent:
         comm_loss = F.cross_entropy(pred_comms, real_comms, reduction = "none")
         comm_loss = comm_loss.reshape((episodes, steps, self.args.max_comm_len))
         comm_loss = comm_loss.mean(-1).unsqueeze(-1) * masks
-        
-        if(verbose):
-            print("\nReal comm:", onehots_to_string(comms[0,1]))
-            print("Pred comm:", onehots_to_string(pred_comms.reshape((episodes, steps, self.args.max_comm_len, self.args.comm_shape))[0,0]))
         
         accuracy_for_prediction_error = object_loss + comm_loss # * self.args.comm_scaler
         accuracy           = accuracy_for_prediction_error.mean()
@@ -421,9 +374,6 @@ class Agent:
         
             self.soft_update(self.critics[i], self.critic_targets[i], self.args.tau)
         
-        if(verbose):
-            print("\nRewards:", rewards[0,0].item())
-            print("VALUES:", Qs)
         torch.cuda.empty_cache()
                                 
         
@@ -466,10 +416,6 @@ class Agent:
             intrinsic_entropy = torch.mean((alpha * log_pis)*masks).item()
             recommendation_value = calculate_similarity(recommended_actions, new_actions).unsqueeze(-1)
             intrinsic_imitation = -torch.mean((self.args.delta * recommendation_value)*masks).item() 
-            if(verbose):
-                print("\nQ:", -Q[0,0])
-                print("ENTROPY VALUE:", alpha * log_pis[0,0])
-                print("IMITATION VALUE:", -self.args.delta * recommendation_value[0,0])
             actor_loss = (alpha * log_pis - policy_prior_log_prrgbd - self.args.delta * recommendation_value - Q)*masks
             actor_loss = actor_loss.mean() / masks.mean()
 
