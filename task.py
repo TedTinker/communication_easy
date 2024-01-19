@@ -16,12 +16,14 @@ class Task:
             shapes = 1, 
             colors = 1, 
             parent = True, 
+            test_generalizing = False,
             args = default_args):
         self.actions = actions
         self.objects = objects 
         self.shapes = shapes
         self.colors = colors
         self.parent = parent
+        self.test_generalizing = test_generalizing
         self.args = args
         
     def begin(self, verbose = False):

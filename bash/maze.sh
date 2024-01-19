@@ -77,12 +77,9 @@ jid=$(sbatch --dependency=afterok:$dict_jid communication_easy/bash/plotting.slu
 echo "$jid : plotting"
 jid_list+=($jid)
 
-jid=$(sbatch --dependency=afterok:$dict_jid communication_easy/bash/plotting_pos.slurm | awk '{print $4}')
-echo "$jid : plotting positions"
+jid=$(sbatch --dependency=afterok:$dict_jid communication_easy/bash/plotting_episodes.slurm | awk '{print $4}')
+echo "$jid : plotting episodes"
 jid_list+=($jid)
-
-jid=$(sbatch --dependency=afterok:$dict_jid communication_easy/bash/plotting_pred.slurm | awk '{print $4}')
-echo "$jid : plotting predictions"
 
 jid=$(sbatch --dependency=afterok:$dict_jid communication_easy/bash/plotting_p_values.slurm | awk '{print $4}')
 echo "$jid : plotting p-values"

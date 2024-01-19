@@ -1,7 +1,8 @@
 #%% 
 
 # To do:
-# Make it work on Deigo.
+# Finish plotting. (mostly done: only one critic-loss plotted, and odd hidden-state curiosity min_maxing.)
+# Save whole episodes.
 # Fix forward-collapse.
 # Make a "generalization" check to see if it can generalize combos it hasn't seen.
 # Add double-agent. 
@@ -156,7 +157,7 @@ parser.add_argument("--beta",               type=literal,    default = [1],
     # Entropy
 parser.add_argument("--alpha",              type=literal,    default = 0,
                     help='Nonnegative value, how much to consider entropy. Set to None to use target_entropy.')        
-parser.add_argument("--target_entropy",     type=float,      default = -2,
+parser.add_argument("--target_entropy",     type=float,      default = 0,
                     help='Target for choosing alpha if alpha set to None. Recommended: negative size of action-space.')      
 parser.add_argument('--action_prior',       type=str,        default = "uniform",
                     help='The actor can be trained based on normal or uniform distributions.')
@@ -179,19 +180,12 @@ parser.add_argument("--delta",              type=float,     default = 0,
 parser.add_argument('--keep_data',           type=int,        default = 1,
                     help='How many epochs should pass before saving data.')
 
-parser.add_argument('--epochs_per_pred_list',type=int,        default = 10000000,
-                    help='How many epochs should pass before saving agent predictions.')
-parser.add_argument('--agents_per_pred_list',type=int,        default = 1,
-                    help='How many agents to save predictions.')
-parser.add_argument('--episodes_in_pred_list',type=int,       default = 1,
-                    help='How many episodes of predictions to save per agent.')
-
-parser.add_argument('--epochs_per_pos_list', type=int,        default = 100,
-                    help='How many epochs should pass before saving agent positions.')
-parser.add_argument('--agents_per_pos_list', type=int,        default = -1,
-                    help='How many agents to save positions.')
-parser.add_argument('--episodes_in_pos_list',type=int,        default = 1,
-                    help='How many episodes of positions to save per agent.')
+parser.add_argument('--epochs_per_episode_list',type=int,        default = 10000000,
+                    help='How many epochs should pass before saving an episode.')
+parser.add_argument('--agents_per_episode_list',type=int,        default = 1,
+                    help='How many agents to save episodes.')
+parser.add_argument('--episodes_in_episode_list',type=int,       default = 1,
+                    help='How many episodes to save per agent.')
 
 parser.add_argument('--epochs_per_agent_list',type=int,       default = 100000,
                     help='How many epochs should pass before saving agent model.')
@@ -602,7 +596,7 @@ def load_dicts(args):
     
     min_max_dict = {}
     for key in plot_dicts[0].keys():
-        if(not key in ["args", "arg_title", "arg_name", "pred_lists", "pos_lists", "agents_lists", "spot_names", "steps"]):
+        if(not key in ["args", "arg_title", "arg_name", "episode_lists", "agent_lists", "spot_names", "steps"]):
             minimum = None ; maximum = None
             for mm_dict in min_max_dicts:
                 if(mm_dict[key] != (None, None)):

@@ -45,17 +45,6 @@ def expand_args(name, args):
 
 slurm_dict = {
     "d"     : {}, 
-    "e"     : {"alpha" : "None"},
-    "n"     : {                     "curiosity" : "prediction_error"},
-    "f"     : {                     "curiosity" : "hidden_state"},
-    "i"     : {                                                         "delta" : 5},
-    "en"    : {"alpha" : "None",    "curiosity" : "prediction_error"},
-    "ef"    : {"alpha" : "None",    "curiosity" : "hidden_state"},
-    "ei"    : {"alpha" : "None",                                        "delta" : 5},
-    "ni"    : {                     "curiosity" : "prediction_error",   "delta" : 5},
-    "fi"    : {                     "curiosity" : "hidden_state",       "delta" : 5},
-    "eni"   : {"alpha" : "None",    "curiosity" : "prediction_error",   "delta" : 5},
-    "efi"   : {"alpha" : "None",    "curiosity" : "hidden_state",       "delta" : 5},
     }
 
 
@@ -65,7 +54,9 @@ def add_this(name, args):
     keys, values = [], []
     for key, value in slurm_dict.items(): keys.append(key) ; values.append(value)
     for key, value in zip(keys, values):  
-        new_key = key + "_" + name 
+        if(key == "d"): key = ""
+        between = "" if key == "" or len(name) == 1 else "_"
+        new_key = key + between + name 
         new_value = deepcopy(value)
         for arg_name, arg in args.items():
             if(type(arg) != list): new_value[arg_name] = arg
@@ -79,7 +70,11 @@ def add_this(name, args):
 
 
 
-add_this("def",   {})
+add_this("e",   {"alpha" : "None"})
+add_this("n",   {"curiosity" : "prediction_error"})
+add_this("f",   {"curiosity" : "hidden_state"})
+add_this("i",   {"delta" : 5})
+
 
 
 new_slurm_dict = {}
@@ -168,20 +163,12 @@ singularity exec {} maze.sif python communication_easy/finish_dicts.py --comp {}
 singularity exec {} maze.sif python communication_easy/plotting.py --comp {} --arg_title {} --arg_name plotting
 """.format(partition, module, nv, args.comp, combined)[2:])
         
-    with open("plotting_pred.slurm", "w") as f:
+    with open("plotting_episodes.slurm", "w") as f:
         f.write(
 """
 {}
 {}
-singularity exec {} maze.sif python communication_easy/plotting_pred.py --comp {} --arg_title {} --arg_name plotting_predictions
-""".format(partition, module, nv, args.comp, combined)[2:])
-        
-    with open("plotting_pos.slurm", "w") as f:
-        f.write(
-"""
-{}
-{}
-singularity exec {} maze.sif python communication_easy/plotting_pos.py --comp {} --arg_title {} --arg_name plotting_positions
+singularity exec {} maze.sif python communication_easy/plotting_episodes.py --comp {} --arg_title {} --arg_name plotting_episodes
 """.format(partition, module, nv, args.comp, combined)[2:])
         
     with open("plotting_p_values.slurm", "w") as f:

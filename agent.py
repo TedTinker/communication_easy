@@ -61,8 +61,7 @@ class Agent:
             "args" : self.args,
             "arg_title" : args.arg_title,
             "arg_name" : args.arg_name,
-            "pred_lists" : {}, 
-            "pos_lists" : {}, 
+            "episode_lists" : {}, 
             "agent_lists" : {"forward" : PVRNN, "actor" : Actor, "critic" : Critic},
             "wins" : [], 
             "rewards" : [], 
@@ -73,7 +72,7 @@ class Agent:
             "complexity" : [],
             "alpha" : [], 
             "actor" : [], 
-            "critics" : [], 
+            "critics" : [[] for _ in range(self.args.critics)], 
             "extrinsic" : [], 
             "q" : [], 
             "intrinsic_curiosity" : [], 
@@ -85,8 +84,7 @@ class Agent:
         
         
     def training(self, q = None):        
-        self.pred_episodes()
-        self.pos_episodes()
+        self.save_episodes()
         self.save_agent()
         while(True):
             cumulative_epochs = 0
@@ -97,27 +95,23 @@ class Agent:
                     self.task_probabilities = self.args.task_probabilities[i] 
                     break
             #if(prev_task != self.task_name): 
-            #    self.pred_episodes()
-            #    self.pos_episodes()
+            #    self.save_episodes()
             #    self.maze = Hard_Maze(self.maze_name, args = self.args)
-            #    self.pred_episodes()
-            #    self.pos_episodes()
+            #    self.save_episodes()
             self.training_episode()
             percent_done = str(self.epochs / sum(self.args.epochs))
             if(q != None):
                 q.put((self.agent_num, percent_done))
             if(self.epochs >= sum(self.args.epochs)): break
-            if(self.epochs % self.args.epochs_per_pred_list == 0): self.pred_episodes()
-            if(self.epochs % self.args.epochs_per_pos_list == 0): self.pos_episodes()
+            if(self.epochs % self.args.epochs_per_episode_list == 0): self.save_episodes()
             if(self.epochs % self.args.epochs_per_agent_list == 0): self.save_agent()
         self.plot_dict["rewards"] = list(accumulate(self.plot_dict["rewards"]))
-        self.pred_episodes()
-        self.pos_episodes()
+        self.save_episodes()
         self.save_agent()
         
         self.min_max_dict = {key : [] for key in self.plot_dict.keys()}
         for key in self.min_max_dict.keys():
-            if(not key in ["args", "arg_title", "arg_name", "pred_lists", "pos_lists", "agent_lists", "spot_names", "steps"]):
+            if(not key in ["args", "arg_title", "arg_name", "episode_lists", "agent_lists", "spot_names", "steps"]):
                 minimum = None ; maximum = None 
                 l = self.plot_dict[key]
                 l = deepcopy(l)
@@ -183,6 +177,8 @@ class Agent:
                         self.plot_dict["complexity"].append(complexity)
                         self.plot_dict["alpha"].append(alpha)
                         self.plot_dict["actor"].append(actor)
+                        for layer, f in enumerate(critics):
+                            self.plot_dict["critics"][layer].append(f)    
                         self.plot_dict["critics"].append(critics)
                         self.plot_dict["extrinsic"].append(e)
                         self.plot_dict["q"].append(q)
@@ -199,7 +195,7 @@ class Agent:
         
         
         
-    def pred_episodes(self):
+    def save_episodes(self):
         pass
         """
         with torch.no_grad():
@@ -229,23 +225,6 @@ class Agent:
                         prev_a = a ; h_q = h_q_p1
                 pred_lists.append(pred_list)
             self.plot_dict["pred_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, self.maze.name)] = pred_lists
-        """
-        
-    def pos_episodes(self):
-        pass 
-        """
-        if(self.args.agents_per_pos_list != -1 and self.agent_num > self.args.agents_per_pos_list): return
-        pos_lists = []
-        for episode in range(self.args.episodes_in_pos_list):
-            done = False ; prev_a = torch.zeros((1, 1, action_size))
-            h_actor = torch.zeros((1, 1, self.args.hidden_size))
-            self.maze.begin()
-            pos_list = [self.maze_name, self.maze.maze.get_pos_yaw_spe()[0]]
-            for step in range(self.args.max_steps):
-                if(not done): prev_a, h_actor, _, _, done, _ = self.step_in_episode(prev_a, h_actor, push = False)
-                pos_list.append(self.maze.maze.get_pos_yaw_spe()[0])
-            pos_lists.append(pos_list)
-        self.plot_dict["pos_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, self.maze.name)] = pos_lists
         """
         
         
