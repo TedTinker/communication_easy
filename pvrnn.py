@@ -174,6 +174,11 @@ class PVRNN(nn.Module):
         self.apply(init_weights)
         self.to(args.device)
         
+    def predict(self, h, action):
+        h_w_actions = torch.cat([h, self.pvrnn_layers[0].action_in(action)], dim = -1)
+        pred_objects, pred_comms = self.predict_obs(h_w_actions)
+        return(pred_objects,  pred_comms)
+        
     def bottom_to_top_step(self, prev_hidden_states, objects = None, comms = None, prev_actions = None):
         if(objects != None and len(objects.shape) == 3): 
             objects = objects.unsqueeze(1)
@@ -235,12 +240,8 @@ class PVRNN(nn.Module):
         for i in range(len(lists)):
             lists[i] = torch.cat(lists[i], dim=1)
         zp_mu, zp_std, zq_mu, zq_std, new_hidden_states = lists
-                
-        if(steps == 1):
-            h_w_actions = torch.cat([new_hidden_states[:,:,0], self.pvrnn_layers[0].action_in(prev_actions)], dim = -1)
-        else:
-            h_w_actions = torch.cat([new_hidden_states[:,:-1,0], self.pvrnn_layers[0].action_in(prev_actions[:,1:])], dim = -1)
-        pred_objects, pred_comms = self.predict_obs(h_w_actions)
+        
+        pred_objects, pred_comms = self.predict(new_hidden_states[:,:-1,0], prev_actions[:,1:])
         
         return(
             (zp_mu, zp_std),
