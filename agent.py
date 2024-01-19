@@ -88,16 +88,14 @@ class Agent:
         self.save_agent()
         while(True):
             cumulative_epochs = 0
-            # prev_task = 
+            prev_task_probs = self.task_probabilities
             for i, epochs in enumerate(self.args.epochs): 
                 cumulative_epochs += epochs
                 if(self.epochs < cumulative_epochs): 
                     self.task_probabilities = self.args.task_probabilities[i] 
                     break
-            #if(prev_task != self.task_name): 
-            #    self.save_episodes()
-            #    self.maze = Hard_Maze(self.maze_name, args = self.args)
-            #    self.save_episodes()
+            if(prev_task_probs != self.task_probabilities): 
+                self.save_episodes()
             self.training_episode()
             percent_done = str(self.epochs / sum(self.args.epochs))
             if(q != None):
@@ -196,12 +194,12 @@ class Agent:
         
         
     def save_episodes(self):
-        pass
-        """
         with torch.no_grad():
-            if(self.args.agents_per_pred_list != -1 and self.agent_num > self.args.agents_per_pred_list): return
-            pred_lists = []
-            for episode in range(self.args.episodes_in_pred_list):
+            if(self.args.agents_per_episode_list != -1 and self.agent_num > self.args.agents_per_episode_list): return
+            episode_lists = []
+            for episode_num in range(self.args.episodes_in_episode_list):
+                print("Supposed to be saving episodes! {} epochs, {} episodes, {} steps, {} agent_num, {} episode_num".format(self.epochs, self.episodes, self.steps, self.agent_num, episode_num))
+        """
                 done = False ; prev_a = torch.zeros((1, 1, action_size))
                 h_actor = torch.zeros((1, 1, self.args.hidden_size))
                 h_q     = torch.zeros((1, 1, self.args.hidden_size))

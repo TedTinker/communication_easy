@@ -103,7 +103,7 @@ def many_min_max(min_max_list):
 
 
 def plots(plot_dicts, min_max_dict):
-    too_many_plot_dicts = len(plot_dicts) > 20
+    too_many_plot_dicts = len(plot_dicts) > 25
     figsize = (10, 10)
     if(not too_many_plot_dicts):
         fig, axs = plt.subplots(18, len(plot_dicts), figsize = (20*len(plot_dicts), 300))
@@ -123,7 +123,6 @@ def plots(plot_dicts, min_max_dict):
             xs = [xs[int(round(len(xs)*p))] for p in percentages]
             for x in xs: here.axvline(x=x, color = (0,0,0,.2))
     
-        # Need to make this actually rolling!
         # Rolling win-rate
         win_dict = get_quantiles(plot_dict, "wins", adjust_xs = False)
         win_dict = get_rolling_average(win_dict)
@@ -139,9 +138,9 @@ def plots(plot_dicts, min_max_dict):
             
         def plot_rolling_average_wins_shared_min_max(here):
             awesome_plot(here, win_dict, "turquoise", "WinRate", min_max_dict["wins"])
-            ax.set_ylabel("Rolling-Average Win-Rate")
-            ax.set_xlabel("Epochs")
-            ax.set_title(plot_dict["arg_title"] + "\nRolling-Average Win-Rate, shared min/max")
+            here.set_ylabel("Rolling-Average Win-Rate")
+            here.set_xlabel("Epochs")
+            here.set_title(plot_dict["arg_title"] + "\nRolling-Average Win-Rate, shared min/max")
             divide_arenas(win_dict, here)
         
         if(not too_many_plot_dicts): plot_rolling_average_wins_shared_min_max(ax)

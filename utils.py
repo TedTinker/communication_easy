@@ -180,7 +180,7 @@ parser.add_argument("--delta",              type=float,     default = 0,
 parser.add_argument('--keep_data',           type=int,        default = 1,
                     help='How many epochs should pass before saving data.')
 
-parser.add_argument('--epochs_per_episode_list',type=int,        default = 10000000,
+parser.add_argument('--epochs_per_episode_list',type=int,        default = 250,
                     help='How many epochs should pass before saving an episode.')
 parser.add_argument('--agents_per_episode_list',type=int,        default = 1,
                     help='How many agents to save episodes.')
