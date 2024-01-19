@@ -199,13 +199,27 @@ class Agent:
             episode_lists = []
             for episode_num in range(self.args.episodes_in_episode_list):
                 print("Supposed to be saving episodes! {} epochs, {} episodes, {} steps, {} agent_num, {} episode_num".format(self.epochs, self.episodes, self.steps, self.agent_num, episode_num))
+                episode_dict = {
+                    "objects" : [],
+                    "comms" : [],
+                    "actions" : [],
+                    "rewards" : [],
+                    "prior_predicted_objects" : [],
+                    "prior_predicted_comms" : [],
+                    "posterior_predicted_objects" : [],
+                    "posterior_predicted_comms" : []}
+                done = False
+                steps = 0
+                prev_action = torch.zeros((1, 1, self.args.action_shape))
+                hq = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
+                ha = torch.zeros((1, 1, self.args.hidden_size)) 
+                selected_task = choose_task(self.task_probabilities)
+                self.task = self.task_runners[selected_task]
+                self.task.begin()        
+                for step in range(self.args.max_steps):
+                    if(not done):
+                        prev_action, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push = False)
         """
-                done = False ; prev_a = torch.zeros((1, 1, action_size))
-                h_actor = torch.zeros((1, 1, self.args.hidden_size))
-                h_q     = torch.zeros((1, 1, self.args.hidden_size))
-                self.maze.begin()
-                o, s = self.maze.obs()
-                pred_list = [(None, (o.squeeze(0), s.squeeze(0)), (None, None), (None, None))]
                 for step in range(self.args.max_steps):
                     if(not done): 
                         o, s = self.maze.obs()
