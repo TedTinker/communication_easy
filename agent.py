@@ -216,9 +216,16 @@ class Agent:
                 selected_task = choose_task(self.task_probabilities)
                 self.task = self.task_runners[selected_task]
                 self.task.begin()        
+                obj, comm = self.task.obs()
+                episode_dict["objects"].append(obj)
+                episode_dict["comms"].append(comm)
                 for step in range(self.args.max_steps):
                     if(not done):
                         prev_action, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push = False)
+                        episode_dict["actions"].append(prev_action)
+                        obj, comm = self.task.obs()
+                        episode_dict["objects"].append(obj)
+                        episode_dict["comms"].append(comm)
         """
                 for step in range(self.args.max_steps):
                     if(not done): 
