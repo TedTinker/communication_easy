@@ -61,7 +61,7 @@ class Agent:
             "args" : self.args,
             "arg_title" : args.arg_title,
             "arg_name" : args.arg_name,
-            "episode_lists" : {}, 
+            "episode_dicts" : {}, 
             "agent_lists" : {"forward" : PVRNN, "actor" : Actor, "critic" : Critic},
             "wins" : [], 
             "rewards" : [], 
@@ -101,7 +101,7 @@ class Agent:
             if(q != None):
                 q.put((self.agent_num, percent_done))
             if(self.epochs >= sum(self.args.epochs)): break
-            if(self.epochs % self.args.epochs_per_episode_list == 0): self.save_episodes()
+            if(self.epochs % self.args.epochs_per_episode_dict == 0): self.save_episodes()
             if(self.epochs % self.args.epochs_per_agent_list == 0): self.save_agent()
         self.plot_dict["rewards"] = list(accumulate(self.plot_dict["rewards"]))
         self.save_episodes()
@@ -109,7 +109,7 @@ class Agent:
         
         self.min_max_dict = {key : [] for key in self.plot_dict.keys()}
         for key in self.min_max_dict.keys():
-            if(not key in ["args", "arg_title", "arg_name", "episode_lists", "agent_lists", "spot_names", "steps"]):
+            if(not key in ["args", "arg_title", "arg_name", "episode_dicts", "agent_lists", "spot_names", "steps"]):
                 minimum = None ; maximum = None 
                 l = self.plot_dict[key]
                 l = deepcopy(l)
@@ -195,10 +195,8 @@ class Agent:
         
     def save_episodes(self):
         with torch.no_grad():
-            if(self.args.agents_per_episode_list != -1 and self.agent_num > self.args.agents_per_episode_list): return
-            episode_lists = []
-            for episode_num in range(self.args.episodes_in_episode_list):
-                print("Supposed to be saving episodes! {} epochs, {} episodes, {} steps, {} agent_num, {} episode_num".format(self.epochs, self.episodes, self.steps, self.agent_num, episode_num))
+            if(self.args.agents_per_episode_dict != -1 and self.agent_num > self.args.agents_per_episode_dict): return
+            for episode_num in range(self.args.episodes_in_episode_dict):
                 hps = []
                 hqs = []
                 episode_dict = {
@@ -233,12 +231,11 @@ class Agent:
                 for hp, hq, action in zip(hps, hqs, episode_dict["actions"]):
                     pred_objects_p, pred_comm_p = self.forward.predict(hp, action)
                     pred_objects_q, pred_comm_q = self.forward.predict(hq, action)
-                    episode_dict["prior_predicted_objects"].append(pred_objects_p)
-                    episode_dict["prior_predicted_comms"].append(pred_comm_p)
-                    episode_dict["posterior_predicted_objects"].append(pred_objects_q)
-                    episode_dict["posterior_predicted_comms"].append(pred_comm_q)
-                episode_lists.append(episode_dict)
-            self.plot_dict["episode_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, episode_num)] = episode_lists
+                    episode_dict["prior_predicted_objects"].append(pred_objects_p.squeeze(0).squeeze(0))
+                    episode_dict["prior_predicted_comms"].append(pred_comm_p.squeeze(0).squeeze(0))
+                    episode_dict["posterior_predicted_objects"].append(pred_objects_q.squeeze(0).squeeze(0))
+                    episode_dict["posterior_predicted_comms"].append(pred_comm_q.squeeze(0).squeeze(0))
+                self.plot_dict["episode_dicts"]["{}_{}_{}".format(self.agent_num, self.epochs, episode_num)] = episode_dict
         
         
         

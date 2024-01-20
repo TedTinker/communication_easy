@@ -25,16 +25,16 @@ for folder in folders:
             if(key in ["args", "arg_title", "arg_name"]): d[key] = saved_d[key]
             else:  d[key].append(saved_d[key])
             
-    episode_lists = {}
-    for d in plot_dict["episode_lists"]: episode_lists.update(d)
-    plot_dict["episode_lists"] = episode_lists
+    episode_dicts = {}
+    for d in plot_dict["episode_dicts"]: episode_dicts.update(d)
+    plot_dict["episode_dicts"] = episode_dicts
     
     agent_lists = {}
     for d in plot_dict["agent_lists"]: agent_lists.update(d)
     plot_dict["agent_lists"] = agent_lists
         
     for key in min_max_dict.keys():
-        if(not key in ["args", "arg_title", "arg_name", "episode_lists", "agent_lists", "spot_names", "steps"]):
+        if(not key in ["args", "arg_title", "arg_name", "episode_dicts", "agent_lists", "spot_names", "steps"]):
             if(key == "hidden_state"):
                 min_maxes = []
                 for layer in min_max_dict[key]:

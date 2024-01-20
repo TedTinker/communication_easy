@@ -111,7 +111,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
 
     # Training
-parser.add_argument('--epochs',             type=literal,    default = [2000],
+parser.add_argument('--epochs',             type=literal,    default = [1000],
                     help='List of how many epochs to train in each maze.')
 parser.add_argument('--batch_size',         type=int,        default = 128, 
                     help='How many episodes are sampled for each epoch.')       
@@ -180,11 +180,11 @@ parser.add_argument("--delta",              type=float,     default = 0,
 parser.add_argument('--keep_data',           type=int,        default = 1,
                     help='How many epochs should pass before saving data.')
 
-parser.add_argument('--epochs_per_episode_list',type=int,        default = 250,
+parser.add_argument('--epochs_per_episode_dict',type=int,        default = 250,
                     help='How many epochs should pass before saving an episode.')
-parser.add_argument('--agents_per_episode_list',type=int,        default = 1,
+parser.add_argument('--agents_per_episode_dict',type=int,        default = 1,
                     help='How many agents to save episodes.')
-parser.add_argument('--episodes_in_episode_list',type=int,       default = 1,
+parser.add_argument('--episodes_in_episode_dict',type=int,       default = 1,
                     help='How many episodes to save per agent.')
 
 parser.add_argument('--epochs_per_agent_list',type=int,       default = 100000,
@@ -596,7 +596,7 @@ def load_dicts(args):
     
     min_max_dict = {}
     for key in plot_dicts[0].keys():
-        if(not key in ["args", "arg_title", "arg_name", "episode_lists", "agent_lists", "spot_names", "steps"]):
+        if(not key in ["args", "arg_title", "arg_name", "episode_dicts", "agent_lists", "spot_names", "steps"]):
             minimum = None ; maximum = None
             for mm_dict in min_max_dicts:
                 if(mm_dict[key] != (None, None)):

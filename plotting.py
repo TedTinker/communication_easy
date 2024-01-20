@@ -107,8 +107,6 @@ def plots(plot_dicts, min_max_dict):
     figsize = (10, 10)
     if(not too_many_plot_dicts):
         fig, axs = plt.subplots(18, len(plot_dicts), figsize = (20*len(plot_dicts), 300))
-    
-    
                 
     for i, plot_dict in enumerate(plot_dicts):
         
