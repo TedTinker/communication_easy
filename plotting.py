@@ -451,6 +451,6 @@ def plots(plot_dicts, min_max_dict):
     
     
 
-plot_dicts, min_max_dict, complete_order, plot_dicts = load_dicts(args)
+plot_dicts, min_max_dict, complete_order = load_dicts(args)
 plots(plot_dicts, min_max_dict)
 print("\nDuration: {}. Done!".format(duration()))

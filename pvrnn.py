@@ -85,18 +85,23 @@ class PVRNN_LAYER(nn.Module):
         zq_mu, zq_std = var(zq_inputs, self.zq_mu, self.zq_std, self.args)
         zq = sample(zq_mu, zq_std, self.args.device)
             
-        if(self.top):
-            mtrnn_inputs = zq 
-        else:
-            mtrnn_inputs = torch.cat([zq, prev_hidden_states_above], dim = -1)
             
-        new_hidden_states = self.mtrnn(mtrnn_inputs, prev_hidden_states)
+        if(self.top):
+            mtrnn_inputs_p = zp
+        else:
+            mtrnn_inputs_p = torch.cat([zp, prev_hidden_states_above], dim = -1)
+            
+        if(self.top):
+            mtrnn_inputs_q = zq 
+        else:
+            mtrnn_inputs_q = torch.cat([zq, prev_hidden_states_above], dim = -1)
+            
+        new_hidden_states_p = self.mtrnn(mtrnn_inputs_p, prev_hidden_states)
+        new_hidden_states_q = self.mtrnn(mtrnn_inputs_q, prev_hidden_states)
         
         return(
-            (zp_mu, zp_std),
-            (zq_mu, zq_std),
-            new_hidden_states)
-        
+            (zp_mu, zp_std, new_hidden_states_p),
+            (zq_mu, zq_std, new_hidden_states_q))        
         
     
 if __name__ == "__main__":
@@ -191,63 +196,63 @@ class PVRNN(nn.Module):
         zp_std_list = []
         zq_mu_list = []
         zq_std_list = []
-        new_hidden_states_list= []
+        new_hidden_states_list_p = []
+        new_hidden_states_list_q = []
                 
         for layer in range(self.args.layers):
-            (zp_mu, zp_std), (zq_mu, zq_std), new_hidden_states = \
+            (zp_mu, zp_std, new_hidden_states_p), (zq_mu, zq_std, new_hidden_states_q) = \
                 self.pvrnn_layers[layer](
                     prev_hidden_states[:,layer].unsqueeze(1), 
                     objects, comms, prev_actions,
-                    new_hidden_states_list[-1] if layer > 0 else None, 
+                    new_hidden_states_list_q[-1] if layer > 0 else None, 
                     prev_hidden_states[:,layer+1].unsqueeze(1) if layer + 1 < self.args.layers else None)
     
             for l, o in zip(
-                [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list],
-                [zp_mu, zp_std, zq_mu, zq_std, new_hidden_states]):            
+                [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list_p, new_hidden_states_list_q],
+                [zp_mu, zp_std, zq_mu, zq_std, new_hidden_states_p,  new_hidden_states_q]):            
                 l.append(o)
                 
-        lists = [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list]
+        lists = [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list_p, new_hidden_states_list_q]
         for i in range(len(lists)):
             lists[i] = torch.cat(lists[i], dim=1)
-        zp_mu, zp_std, zq_mu, zq_std, new_hidden_states = lists
+        zp_mu, zp_std, zq_mu, zq_std, new_hidden_states_p, new_hidden_states_q = lists
                         
         return(
-            (zp_mu.unsqueeze(1), zp_std.unsqueeze(1)),
-            (zq_mu.unsqueeze(1), zq_std.unsqueeze(1)),
-            new_hidden_states.unsqueeze(1))
+            (zp_mu.unsqueeze(1), zp_std.unsqueeze(1), new_hidden_states_p.unsqueeze(1)),
+            (zq_mu.unsqueeze(1), zq_std.unsqueeze(1), new_hidden_states_q.unsqueeze(1)))
     
     def forward(self, prev_hidden_states, objects, comms, prev_actions):
         zp_mu_list = []
         zp_std_list = []
         zq_mu_list = []
         zq_std_list = []
-        new_hidden_states_list = []
+        new_hidden_states_list_p = []
+        new_hidden_states_list_q = []
                 
         episodes, steps = episodes_steps(objects)
         
         for step in range(steps):
-            (zp_mu, zp_std), (zq_mu, zq_std), new_hidden_states = \
+            (zp_mu, zp_std, new_hidden_states_p), (zq_mu, zq_std, new_hidden_states_q) = \
                 self.bottom_to_top_step(prev_hidden_states, objects[:,step], comms[:,step], prev_actions[:,step])
             
             for l, o in zip(
-                [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list],
-                [zp_mu, zp_std, zq_mu, zq_std, new_hidden_states]):     
+                [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list_p, new_hidden_states_list_q],
+                [zp_mu, zp_std, zq_mu, zq_std, new_hidden_states_p, new_hidden_states_q]):     
                 l.append(o)
                 
-            prev_hidden_states = new_hidden_states.squeeze(1)
+            prev_hidden_states = new_hidden_states_q.squeeze(1)
             
-        lists = [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list]
+        lists = [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list_p, new_hidden_states_list_q]
         for i in range(len(lists)):
             lists[i] = torch.cat(lists[i], dim=1)
-        zp_mu, zp_std, zq_mu, zq_std, new_hidden_states = lists
+        zp_mu, zp_std, zq_mu, zq_std, new_hidden_states_p, new_hidden_states_q = lists
         
-        pred_objects, pred_comms = self.predict(new_hidden_states[:,:-1,0], prev_actions[:,1:])
+        pred_objects, pred_comms = self.predict(new_hidden_states_q[:,:-1,0], prev_actions[:,1:])
         
         return(
-            (zp_mu, zp_std),
-            (zq_mu, zq_std),
-            (pred_objects, pred_comms),
-            new_hidden_states)
+            (zp_mu, zp_std, new_hidden_states_p),
+            (zq_mu, zq_std, new_hidden_states_q),
+            (pred_objects, pred_comms))
         
         
         

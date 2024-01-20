@@ -620,7 +620,7 @@ def load_dicts(args):
     while(len(final_complete_order) > 0 and final_complete_order[0] in ["break", "empty_space"]): 
         final_complete_order.pop(0)              
     
-    return(plot_dicts, min_max_dict, complete_order, final_plot_dicts)
+    return(final_plot_dicts, min_max_dict, complete_order)
 # %%
 
 

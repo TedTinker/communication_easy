@@ -127,7 +127,7 @@ class Agent:
         with torch.no_grad():
             obj, comm = self.task.obs()
             recommended_action = self.task.task.get_recommended_action()
-            (_, _), (_, _), hq = self.forward.bottom_to_top_step(hq_m1, obj, comm, prev_action) 
+            (_, _, hp), (_, _, hq) = self.forward.bottom_to_top_step(hq_m1, obj, comm, prev_action) 
             action, _, ha = self.actor(obj, comm, prev_action, hq[:,:,0].clone().detach(), ha_m1) 
             reward, done, win = self.task.action(action)
             next_obj, next_comm = self.task.obs()
@@ -142,7 +142,7 @@ class Agent:
                     next_comm, 
                     done)
         torch.cuda.empty_cache()
-        return(action, hq.squeeze(1), ha, reward, done, win)
+        return(action, hp.squeeze(1), hq.squeeze(1), ha, reward, done, win)
             
            
     
@@ -161,7 +161,7 @@ class Agent:
             self.steps += 1 
             if(not done):
                 steps += 1
-                prev_action, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push)
+                prev_action, hp, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push)
                 total_reward += reward
             if(self.steps % self.args.steps_per_epoch == 0):
                 plot_data = self.epoch(self.args.batch_size)
@@ -199,6 +199,8 @@ class Agent:
             episode_lists = []
             for episode_num in range(self.args.episodes_in_episode_list):
                 print("Supposed to be saving episodes! {} epochs, {} episodes, {} steps, {} agent_num, {} episode_num".format(self.epochs, self.episodes, self.steps, self.agent_num, episode_num))
+                hps = []
+                hqs = []
                 episode_dict = {
                     "objects" : [],
                     "comms" : [],
@@ -209,7 +211,6 @@ class Agent:
                     "posterior_predicted_objects" : [],
                     "posterior_predicted_comms" : []}
                 done = False
-                steps = 0
                 prev_action = torch.zeros((1, 1, self.args.action_shape))
                 hq = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
                 ha = torch.zeros((1, 1, self.args.hidden_size)) 
@@ -221,37 +222,29 @@ class Agent:
                 episode_dict["comms"].append(comm)
                 for step in range(self.args.max_steps):
                     if(not done):
-                        prev_action, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push = False)
+                        prev_action, hp, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push = False)
                         episode_dict["actions"].append(prev_action)
+                        episode_dict["rewards"].append((reward))
                         obj, comm = self.task.obs()
                         episode_dict["objects"].append(obj)
-                        episode_dict["comms"].append(comm)
-        """
-                for step in range(self.args.max_steps):
-                    if(not done): 
-                        o, s = self.maze.obs()
-                        a, h_actor, _, _, done, action_name = self.step_in_episode(prev_a, h_actor, push = False)
-                        (zp_mu, zp_std), (zq_mu, zq_std), h_q_p1 = self.forward(o, s, prev_a, h_q)
-                        (rgbd_mu_pred_p, pred_rgbd_p), (spe_mu_pred_p, pred_spe_p) = self.forward.get_preds(a, zp_mu, zp_std, h_q, quantity = self.args.samples_per_pred)
-                        (rgbd_mu_pred_q, pred_rgbd_q), (spe_mu_pred_q, pred_spe_q) = self.forward.get_preds(a, zq_mu, zq_std, h_q, quantity = self.args.samples_per_pred)
-                        pred_rgbd_p = [pred.squeeze(0).squeeze(0) for pred in pred_rgbd_p] ; pred_rgbd_q = [pred.squeeze(0).squeeze(0) for pred in pred_rgbd_q]
-                        pred_spe_p = [pred.squeeze(0).squeeze(0) for pred in pred_spe_p]   ; pred_spe_q = [pred.squeeze(0).squeeze(0) for pred in pred_spe_q]
-                        o, s = self.maze.obs()
-                        pred_list.append((
-                            action_name, (o.squeeze(0), s.squeeze(0)), 
-                            (pred_rgbd_p, pred_spe_p), 
-                            (pred_rgbd_q, pred_spe_q)))
-                        prev_a = a ; h_q = h_q_p1
-                pred_lists.append(pred_list)
-            self.plot_dict["pred_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, self.maze.name)] = pred_lists
-        """
+                        episode_dict["comms"].append(comm) 
+                        hps.append(hp)
+                        hqs.append(hq)
+                for hp, hq, action in zip(hps, hqs, episode_dict["actions"]):
+                    pred_objects_p, pred_comm_p = self.forward.predict(hp, action)
+                    pred_objects_q, pred_comm_q = self.forward.predict(hq, action)
+                    episode_dict["prior_predicted_objects"].append(pred_objects_p)
+                    episode_dict["prior_predicted_comms"].append(pred_comm_p)
+                    episode_dict["posterior_predicted_objects"].append(pred_objects_q)
+                    episode_dict["posterior_predicted_comms"].append(pred_comm_q)
+                episode_lists.append(episode_dict)
+            self.plot_dict["episode_lists"]["{}_{}_{}".format(self.agent_num, self.epochs, episode_num)] = episode_lists
         
         
         
     def save_agent(self):
-        pass
-        #if(self.args.agents_per_agent_list != -1 and self.agent_num > self.args.agents_per_agent_list): return
-        #self.plot_dict["agent_lists"]["{}_{}".format(self.agent_num, self.epochs)] = deepcopy(self.state_dict())
+        if(self.args.agents_per_agent_list != -1 and self.agent_num > self.args.agents_per_agent_list): return
+        self.plot_dict["agent_lists"]["{}_{}".format(self.agent_num, self.epochs)] = deepcopy(self.state_dict())
     
     
     
@@ -283,7 +276,7 @@ class Agent:
                 
         
         # Train forward
-        (zp_mu, zp_std), (zq_mu, zq_std), (pred_objects, pred_comms), hqs = self.forward(torch.zeros((episodes, self.args.layers, self.args.pvrnn_mtrnn_size)), objects, comms, actions)
+        (zp_mu, zp_std, hps), (zq_mu, zq_std, hqs), (pred_objects, pred_comms) = self.forward(torch.zeros((episodes, self.args.layers, self.args.pvrnn_mtrnn_size)), objects, comms, actions)
         hqs = hqs[:,:,0]
         
         real_shapes = objects[:,1:,:,:self.args.shapes]
