@@ -151,6 +151,14 @@ class Comm_IN(nn.Module):
             nn.PReLU(),
             nn.Dropout(.2))
         
+        self.comm_cnn = nn.Sequential(
+            Ted_Conv1d(
+                in_channels = self.args.hidden_size, 
+                out_channels = [self.args.hidden_size//4]*4, 
+                kernels = [1,3,5,7]),
+            #nn.BatchNorm1d(self.args.hidden_size),
+            nn.PReLU())
+        
         self.comm_lin = nn.Sequential(
             nn.Linear(
                 in_features = self.args.max_comm_len * self.args.hidden_size, 
@@ -280,7 +288,7 @@ class Comm_OUT(nn.Module):
                 in_channels = self.args.hidden_size, 
                 out_channels = [self.args.hidden_size//4]*4, 
                 kernels = [1,3,5,7]),
-            nn.BatchNorm1d(self.args.hidden_size),
+            #nn.BatchNorm1d(self.args.hidden_size),
             nn.PReLU(),
             nn.Dropout(.4))
         
