@@ -2,7 +2,7 @@
 from random import randint, choice
 import torch
 
-from utils import default_args, color_map, shape_map, action_map, pad_zeros,\
+from utils import default_args, color_map, shape_map, action_map, make_object, pad_zeros,\
     string_to_onehots, onehots_to_string, multi_hot_action, action_to_string, print
 
 
@@ -16,33 +16,30 @@ class Task:
             shapes = 1, 
             colors = 1, 
             parent = True, 
-            test_generalizing = False,
             args = default_args):
         self.actions = actions
         self.objects = objects 
         self.shapes = shapes
         self.colors = colors
         self.parent = parent
-        self.test_generalizing = test_generalizing
         self.args = args
         
-    def begin(self, verbose = False):
+    def begin(self, test = False, verbose = False):
         self.solved = False
         self.current_objects = []
         self.goal = []
         obj_list = []
         for i in range(self.args.objects):
-            obj_list.append(self.make_object(nothing = i >= self.objects))
+            obj_list.append(self.make_object(nothing = i >= self.objects, test = test))
         self.current_objects_tensor = torch.cat(obj_list, dim = 0)
         self.make_goal()
         if(verbose):
             print(self)
         
-    def make_object(self, nothing = False):
+    def make_object(self, nothing = False, test = False):
         obj = torch.zeros((1, self.args.shapes + self.args.colors))
         if(not nothing):
-            shape = randint(0, self.shapes - 1)
-            color = randint(0, self.colors - 1)
+            shape, color = make_object(self.shapes, self.colors, test)
             self.current_objects.append((shape, color))
             obj[0, shape] = 1
             obj[0, self.args.shapes + color] = 1

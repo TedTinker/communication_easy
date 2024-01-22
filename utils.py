@@ -1,8 +1,6 @@
 #%% 
 
 # To do:
-# Finish plotting. (mostly done: only one critic-loss plotted, and odd hidden-state curiosity min_maxing.)
-# Save whole episodes.
 # Fix forward-collapse.
 # Make a "generalization" check to see if it can generalize combos it hasn't seen.
 # Add double-agent. 
@@ -15,10 +13,11 @@ import datetime
 import matplotlib
 import argparse, ast
 from math import exp
+from random import choice
 import torch
 from torch import nn 
 import platform
-from random import choices
+from random import choices, randint
 from torch.distributions import Normal
 import torch.distributions as dist
 from torch.nn.functional import cosine_similarity
@@ -44,6 +43,21 @@ color_map = {
     3: "green", 
     4: "orange", 
     5: "purple"}
+
+test_combos = []
+for key in shape_map.keys():
+    test_combos.append((key, key))
+    test_combos.append((key, key+1))
+
+def make_object(shapes = len(shape_map), colors = len(color_map), test = False):
+    if(test):
+        filtered_list = [(a, b) for (a, b) in test_combos if a <= shapes and b <= colors]
+        return(choice(filtered_list))
+    shape_color = (0, 0)
+    while(shape_color in test_combos):
+        shape_color = ((randint(0, shapes - 1), randint(0, colors - 1)))
+    return(shape_color)
+
 action_map = {
     0: "push", 
     1: "pull", 
@@ -111,7 +125,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
 
     # Training
-parser.add_argument('--epochs',             type=literal,    default = [1000],
+parser.add_argument('--epochs',             type=literal,    default = [2000],
                     help='List of how many epochs to train in each maze.')
 parser.add_argument('--batch_size',         type=int,        default = 128, 
                     help='How many episodes are sampled for each epoch.')       
@@ -182,7 +196,7 @@ parser.add_argument('--keep_data',           type=int,        default = 1,
 
 parser.add_argument('--epochs_per_episode_dict',type=int,        default = 250,
                     help='How many epochs should pass before saving an episode.')
-parser.add_argument('--agents_per_episode_dict',type=int,        default = 1,
+parser.add_argument('--agents_per_episode_dict',type=int,        default = 3,
                     help='How many agents to save episodes.')
 parser.add_argument('--episodes_in_episode_dict',type=int,       default = 1,
                     help='How many episodes to save per agent.')
