@@ -2,8 +2,8 @@
 
 # To do:
 # Fix forward-collapse.
-# Make a "generalization" check to see if it can generalize combos it hasn't seen.
-# Add double-agent. 
+# It seems predictions are bad in saved episodes?
+# Add double-agent scenario. 
 
 import os
 import pickle
@@ -96,9 +96,8 @@ parser.add_argument('--device',             type=str,        default = device,
                     help='Which device to use for Torch.')
 
     # Task details
-parser.add_argument('--task_probabilities', type=literal,    default = [
-    (("1", 1),)],
-                    help='List of probabilities of tasks. Agent trains on each set of tasks based on epochs in epochs parameter.')
+parser.add_argument('--task_list', type=literal,    default = ["1"],
+                    help='List of tasks. Agent trains on each task based on epochs in epochs parameter.')
 parser.add_argument('--max_steps',          type=int,        default = 3,
                     help='How many steps the agent can make in one episode.')
 parser.add_argument('--step_lim_punishment',type=float,      default = -1,
@@ -126,7 +125,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
 
     # Training
 parser.add_argument('--epochs',             type=literal,    default = [2000],
-                    help='List of how many epochs to train in each maze.')
+                    help='List of how many epochs to train in each task.')
 parser.add_argument('--batch_size',         type=int,        default = 128, 
                     help='How many episodes are sampled for each epoch.')       
 
@@ -193,6 +192,9 @@ parser.add_argument("--delta",              type=float,     default = 0,
     # Saving data
 parser.add_argument('--keep_data',           type=int,        default = 1,
                     help='How many epochs should pass before saving data.')
+
+parser.add_argument('--epochs_per_gen_test', type=int,        default = 10,
+                    help='How many epochs should pass before trying generalization test.')
 
 parser.add_argument('--epochs_per_episode_dict',type=int,        default = 250,
                     help='How many epochs should pass before saving an episode.')
@@ -321,14 +323,6 @@ def estimate_total_duration(proportion_completed, start_time=start_time):
 
 
 # Functions for task at hand.
-def choose_task(probabilities):
-    if(len(probabilities) == 1):
-        selected_task = probabilities[0][0]
-    else:
-        tasks, weights = zip(*probabilities)
-        selected_task = choices(tasks, weights=weights, k=1)[0]
-    return selected_task
-
 def multi_hot_action(action,  args = default_args):
     if(len(action.shape) == 1): action = action.unsqueeze(0)
     if(len(action.shape) == 2): action = action.unsqueeze(0)

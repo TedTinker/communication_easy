@@ -106,7 +106,7 @@ def plots(plot_dicts, min_max_dict):
     too_many_plot_dicts = len(plot_dicts) > 25
     figsize = (10, 10)
     if(not too_many_plot_dicts):
-        fig, axs = plt.subplots(18, len(plot_dicts), figsize = (20*len(plot_dicts), 300))
+        fig, axs = plt.subplots(20, len(plot_dicts), figsize = (20*len(plot_dicts), 300))
                 
     for i, plot_dict in enumerate(plot_dicts):
         
@@ -180,6 +180,42 @@ def plots(plot_dicts, min_max_dict):
         plot_cumulative_rewards_shared_min_max(ax2)  
         ax2.set_title("Cumulative Rewards")
         fig2.savefig("thesis_pics/rewards_{}.png".format(plot_dict["arg_name"]), bbox_inches = "tight", dpi=300) 
+        plt.close(fig2)
+        
+        
+        
+        # Cumulative generalization-test rewards
+        gen_rew_dict = get_quantiles(plot_dict, "gen_rewards", adjust_xs = False)
+        max_reward = args.action_reward + args.shape_reward + args.color_reward + args.correct_reward
+        max_rewards = [max_reward*x for x in range(gen_rew_dict["xs"][-1])]
+        min_reward = args.step_lim_punishment
+        min_rewards = [min_reward*x for x in range(gen_rew_dict["xs"][-1])]
+        if(not too_many_plot_dicts):
+            ax = axs[row_num,i] if len(plot_dicts) > 1 else axs[row_num] ; row_num += 1
+            awesome_plot(ax, gen_rew_dict, "pink", "Reward")
+            ax.axhline(y = 0, color = 'black', linestyle = '--', alpha = .2)
+            ax.set_ylabel("Cumulative Reward")
+            ax.set_xlabel("Epochs")
+            ax.set_title(plot_dict["arg_title"] + "\nCumulative Rewards\nin Generalization-Tests")
+            divide_arenas(gen_rew_dict, ax)
+            
+            ax = axs[row_num,i] if len(plot_dicts) > 1 else axs[row_num] ; row_num += 1
+            
+        def plot_cumulative_gen_rewards_shared_min_max(here):
+            awesome_plot(here, gen_rew_dict, "pink", "Reward", min_max_dict["gen_rewards"])
+            here.axhline(y = 0, color = "black", linestyle = '--', alpha = .2)
+            here.plot(max_rewards, color = "black", label = "Max Reward")
+            here.plot(min_rewards, color = "black", label = "Min Reward")
+            here.set_ylabel("Cumulative Reward")
+            here.set_xlabel("Epochs")
+            here.set_title(plot_dict["arg_title"] + "\nCumulative Rewards\nin Generalization-Tests, shared min/max")
+            divide_arenas(gen_rew_dict, here)
+        
+        if(not too_many_plot_dicts): plot_cumulative_gen_rewards_shared_min_max(ax)
+        fig2, ax2 = plt.subplots(figsize = figsize)  
+        plot_cumulative_gen_rewards_shared_min_max(ax2)  
+        ax2.set_title("Cumulative Rewards\nin Generalization-Tests")
+        fig2.savefig("thesis_pics/gen_rewards_{}.png".format(plot_dict["arg_name"]), bbox_inches = "tight", dpi=300) 
         plt.close(fig2)
             
         

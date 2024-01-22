@@ -11,7 +11,7 @@ from itertools import accumulate
 from copy import deepcopy
 import matplotlib.pyplot as plt
 
-from utils import default_args, dkl, print, choose_task, calculate_similarity, onehots_to_string, multihots_to_string
+from utils import default_args, dkl, print, calculate_similarity, onehots_to_string, multihots_to_string
 from task import Task, Task_Runner
 from buffer import RecurrentReplayBuffer
 from pvrnn import PVRNN
@@ -26,13 +26,12 @@ class Agent:
         self.agent_num = i
         self.args = args
         self.episodes = 0 ; self.epochs = 0 ; self.steps = 0
-        self.task_probabilities = self.args.task_probabilities[0]
         
         self.tasks = {
-            "1" : Task(actions = 5, objects = 3, shapes = 5, colors = 6, args = self.args)}
-        
+            "1" : Task(actions = 5, objects = 3, shapes = 5, colors = 6, args = self.args),
+            "2" : Task(actions = 5, objects = 3, shapes = 5, colors = 6, parent = False, args = self.args)}
         self.task_runners = {task_name : Task_Runner(task) for task_name, task in self.tasks.items()}
-        self.task = choose_task(self.task_probabilities)
+        self.task_name = self.args.task_list[0]
         
         self.target_entropy = self.args.target_entropy
         self.alpha = 1
@@ -65,6 +64,7 @@ class Agent:
             "agent_lists" : {"forward" : PVRNN, "actor" : Actor, "critic" : Critic},
             "wins" : [], 
             "rewards" : [], 
+            "gen_rewards" : [], 
             "steps" : [],
             "accuracy" : [], 
             "object_loss" : [], 
@@ -83,27 +83,32 @@ class Agent:
         
         
         
-    def training(self, q = None):        
+    def training(self, q = None):      
+        self.gen_test()  
         self.save_episodes()
         self.save_agent()
         while(True):
             cumulative_epochs = 0
-            prev_task_probs = self.task_probabilities
+            prev_task_name = self.task_name
             for i, epochs in enumerate(self.args.epochs): 
                 cumulative_epochs += epochs
                 if(self.epochs < cumulative_epochs): 
-                    self.task_probabilities = self.args.task_probabilities[i] 
+                    self.task_name = self.args.task_list[i] 
                     break
-            if(prev_task_probs != self.task_probabilities): 
+            if(prev_task_name != self.task_name): 
+                self.gen_test()  
                 self.save_episodes()
             self.training_episode()
             percent_done = str(self.epochs / sum(self.args.epochs))
             if(q != None):
                 q.put((self.agent_num, percent_done))
             if(self.epochs >= sum(self.args.epochs)): break
+            if(self.epochs % self.args.epochs_per_gen_test == 0): self.gen_test()
             if(self.epochs % self.args.epochs_per_episode_dict == 0): self.save_episodes()
             if(self.epochs % self.args.epochs_per_agent_list == 0): self.save_agent()
         self.plot_dict["rewards"] = list(accumulate(self.plot_dict["rewards"]))
+        self.plot_dict["gen_rewards"] = list(accumulate(self.plot_dict["gen_rewards"]))
+        self.gen_test()  
         self.save_episodes()
         self.save_agent()
         
@@ -125,21 +130,21 @@ class Agent:
     
     def step_in_episode(self, prev_action, hq_m1, ha_m1, push):
         with torch.no_grad():
-            obj, comm = self.task.obs()
+            obj_1, obj_2, parent_comm = self.task.obs()
             recommended_action = self.task.task.get_recommended_action()
-            (_, _, hp), (_, _, hq) = self.forward.bottom_to_top_step(hq_m1, obj, comm, prev_action) 
-            action, _, ha = self.actor(obj, comm, prev_action, hq[:,:,0].clone().detach(), ha_m1) 
+            (_, _, hp), (_, _, hq) = self.forward.bottom_to_top_step(hq_m1, obj_1, parent_comm, prev_action) 
+            action, _, ha = self.actor(obj_1, parent_comm, prev_action, hq[:,:,0].clone().detach(), ha_m1) 
             reward, done, win = self.task.action(action)
-            next_obj, next_comm = self.task.obs()
+            next_obj_1, next_obj_2, next_parent_comm = self.task.obs()
             if(push): 
                 self.memory.push(
-                    obj, 
-                    comm, 
+                    obj_1, 
+                    parent_comm, 
                     action, 
                     recommended_action,
                     reward, 
-                    next_obj, 
-                    next_comm, 
+                    next_obj_1, 
+                    next_parent_comm, 
                     done)
         torch.cuda.empty_cache()
         return(action, hp.squeeze(1), hq.squeeze(1), ha, reward, done, win)
@@ -154,8 +159,7 @@ class Agent:
         hq = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
         ha = torch.zeros((1, 1, self.args.hidden_size)) 
         
-        selected_task = choose_task(self.task_probabilities)
-        self.task = self.task_runners[selected_task]
+        self.task = self.task_runners[self.task_name]
         self.task.begin()        
         for step in range(self.args.max_steps):
             self.steps += 1 
@@ -193,6 +197,26 @@ class Agent:
         
         
         
+    def gen_test(self):
+        done = False
+        total_reward = 0
+        steps = 0
+        prev_action = torch.zeros((1, 1, self.args.action_shape))
+        hq = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
+        ha = torch.zeros((1, 1, self.args.hidden_size)) 
+        
+        self.task = self.task_runners[self.task_name]
+        self.task.begin(test = True)        
+        for step in range(self.args.max_steps):
+            self.steps += 1 
+            if(not done):
+                steps += 1
+                prev_action, hp, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push = False)
+                total_reward += reward
+        self.plot_dict["gen_rewards"].append(total_reward)
+        
+        
+        
     def save_episodes(self):
         with torch.no_grad():
             if(self.args.agents_per_episode_dict != -1 and self.agent_num > self.args.agents_per_episode_dict): return
@@ -212,22 +236,22 @@ class Agent:
                 prev_action = torch.zeros((1, 1, self.args.action_shape))
                 hq = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
                 ha = torch.zeros((1, 1, self.args.hidden_size)) 
-                selected_task = choose_task(self.task_probabilities)
-                self.task = self.task_runners[selected_task]
+                self.task = self.task_runners[self.task_name]
                 self.task.begin()        
-                obj, comm = self.task.obs()
-                episode_dict["objects"].append(obj)
-                episode_dict["comms"].append(comm)
+                obj_1, obj_2, parent_comm = self.task.obs()
+                episode_dict["objects"].append(obj_1)
+                episode_dict["comms"].append(parent_comm)
                 for step in range(self.args.max_steps):
                     if(not done):
                         prev_action, hp, hq, ha, reward, done, win = self.step_in_episode(prev_action, hq, ha, push = False)
-                        episode_dict["actions"].append(prev_action)
-                        episode_dict["rewards"].append((reward))
-                        obj, comm = self.task.obs()
-                        episode_dict["objects"].append(obj)
-                        episode_dict["comms"].append(comm) 
-                        hps.append(hp)
-                        hqs.append(hq)
+                        episode_dict["actions"].append(prev_action.clone())
+                        episode_dict["rewards"].append(reward)
+                        obj_1, obj_2, parent_comm = self.task.obs()
+                        episode_dict["objects"].append(obj_1.clone())
+                        episode_dict["comms"].append(parent_comm.clone()) 
+                        # I think I should only save the last layer?
+                        hps.append(hp.clone())
+                        hqs.append(hq.clone())
                 for hp, hq, action in zip(hps, hqs, episode_dict["actions"]):
                     pred_objects_p, pred_comm_p = self.forward.predict(hp, action)
                     pred_objects_q, pred_comm_q = self.forward.predict(hq, action)
