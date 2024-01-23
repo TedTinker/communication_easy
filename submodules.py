@@ -69,7 +69,6 @@ if __name__ == "__main__":
     
     
 
-""" # Works, but slowly.
 class Comm_IN(nn.Module):
 
     def __init__(self, args = default_args):
@@ -89,20 +88,8 @@ class Comm_IN(nn.Module):
                 in_channels = self.args.hidden_size, 
                 out_channels = [self.args.hidden_size//4]*4, 
                 kernels = [1,3,5,7]),
-            nn.BatchNorm1d(self.args.hidden_size),
-            nn.PReLU(),
-            nn.AvgPool1d(
-                kernel_size = 2,
-                stride = 2),
-            Ted_Conv1d(
-                in_channels = self.args.hidden_size, 
-                out_channels = [self.args.hidden_size//4]*4, 
-                kernels = [1,3,3,5]),
-            nn.BatchNorm1d(self.args.hidden_size),
-            nn.PReLU(),
-            nn.AvgPool1d(
-                kernel_size = 2,
-                stride = 2))
+            #nn.BatchNorm1d(self.args.hidden_size),
+            nn.PReLU())
         
         self.comm_rnn = MTRNN(
             input_size = self.args.hidden_size, 
@@ -135,56 +122,7 @@ class Comm_IN(nn.Module):
         comm = comm.reshape((episodes, steps, self.args.hidden_size))
         comm = self.comm_lin(comm)
         return(comm)
-"""
 
-class Comm_IN(nn.Module):
-
-    def __init__(self, args = default_args):
-        super(Comm_IN, self).__init__()  
-        
-        self.args = args
-        
-        self.comm_embedding = nn.Sequential(
-            nn.Embedding(
-                num_embeddings = self.args.comm_shape,
-                embedding_dim = self.args.hidden_size),
-            nn.PReLU(),
-            nn.Dropout(.2))
-        
-        self.comm_cnn = nn.Sequential(
-            Ted_Conv1d(
-                in_channels = self.args.hidden_size, 
-                out_channels = [self.args.hidden_size//4]*4, 
-                kernels = [1,3,5,7]),
-            #nn.BatchNorm1d(self.args.hidden_size),
-            nn.PReLU())
-        
-        self.comm_lin = nn.Sequential(
-            nn.Linear(
-                in_features = self.args.max_comm_len * self.args.hidden_size, 
-                out_features = self.args.hidden_size),
-            nn.PReLU(),
-            nn.Dropout(.2),
-            nn.Linear(
-                in_features = self.args.hidden_size, 
-                out_features = self.args.hidden_size),
-            nn.PReLU(),
-            nn.Dropout(.2))
-                
-        self.apply(init_weights)
-        self.to(self.args.device)
-        
-    def forward(self, comm):
-        if(len(comm.shape) == 2):  comm = comm.unsqueeze(0)
-        if(len(comm.shape) == 3):  comm = comm.unsqueeze(1)
-        episodes, steps = episodes_steps(comm)
-        comm = pad_zeros(comm, self.args.max_comm_len)
-        comm = torch.argmax(comm, dim = -1)
-        comm = self.comm_embedding(comm.int())
-        comm = comm.reshape((episodes, steps, self.args.max_comm_len * self.args.hidden_size))
-        comm = self.comm_lin(comm)
-        return(comm)
-#"""
     
     
 if __name__ == "__main__":

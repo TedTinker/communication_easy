@@ -13,13 +13,11 @@ import datetime
 import matplotlib
 import argparse, ast
 from math import exp
-from random import choice
+from random import choice, randint
 import torch
 from torch import nn 
 import platform
-from random import choices, randint
 from torch.distributions import Normal
-import torch.distributions as dist
 from torch.nn.functional import cosine_similarity
 
 if(os.getcwd().split("/")[-1] != "communication_easy"): os.chdir("communication_easy")

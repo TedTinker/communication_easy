@@ -27,13 +27,25 @@ class Actor(nn.Module):
         self.args = args
         
         self.obs_in = Obs_IN(args)
+        self.action_in = Action_IN(self.args)
 
         self.lin = nn.Sequential(
-            nn.Linear(self.args.pvrnn_mtrnn_size + 2 * args.hidden_size, args.hidden_size),
+            nn.Linear(
+                in_features = self.args.pvrnn_mtrnn_size + 3 * args.hidden_size, 
+                out_features = args.hidden_size),
             nn.PReLU(),
             nn.Dropout(.2))
+        
+        self.mtrnn = MTRNN(
+                input_size = self.args.hidden_size,
+                hidden_size = self.args.hidden_size, 
+                time_constant = 1,
+                args = self.args)
+        
         self.mu = nn.Sequential(
-            nn.Linear(args.hidden_size, self.args.actions + self.args.objects))
+            nn.Linear(
+                in_features = args.hidden_size, 
+                out_features = self.args.actions + self.args.objects))
         self.std = nn.Sequential(
             nn.Linear(args.hidden_size, self.args.actions + self.args.objects),
             nn.Softplus())
@@ -44,7 +56,10 @@ class Actor(nn.Module):
     def forward(self, objects, comm, prev_action, forward_hidden, action_hidden):
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
         obs = self.obs_in(objects, comm)
-        x = self.lin(torch.cat([obs, forward_hidden], dim = -1))
+        prev_action = self.action_in(prev_action)
+        x = self.lin(torch.cat([obs, prev_action, forward_hidden], dim = -1))
+        x = self.mtrnn(x, action_hidden)
+        action_hidden = action_hidden[:,-1].unsqueeze(1)
         mu, std = var(x, self.mu, self.std, self.args)
         x = sample(mu, std, self.args.device)
         action = torch.tanh(x)
@@ -62,10 +77,10 @@ if __name__ == "__main__":
     print(actor)
     print()
     print(torch_summary(actor,
-                        ((episodes, steps, args.objects, args.shapes + args.colors),
-                         (episodes, steps, args.hidden_size),
-                         (episodes, steps, args.hidden_size),
-                         (episodes, steps, args.hidden_size),
+                        ((episodes, steps, args.objects, args.object_shape), 
+                         (episodes, steps, args.max_comm_len, args.comm_shape), 
+                         (episodes, steps, args.action_shape),
+                         (episodes, steps, args.pvrnn_mtrnn_size),
                          (episodes, steps, args.hidden_size))))
 
     
@@ -78,11 +93,16 @@ class Critic(nn.Module):
         self.args = args
         
         self.obs_in = Obs_IN(self.args)
-        
         self.action_in = Action_IN(self.args)
         
+        self.lin = nn.Sequential(
+            nn.Linear(
+                in_features = self.args.pvrnn_mtrnn_size + 3 * self.args.hidden_size,
+                out_features = self.args.hidden_size),
+            nn.PReLU())
+        
         self.mtrnn = MTRNN(
-                input_size = self.args.pvrnn_mtrnn_size + 3 * self.args.hidden_size,
+                input_size = self.args.hidden_size,
                 hidden_size = self.args.hidden_size, 
                 time_constant = 1,
                 args = self.args)
@@ -102,8 +122,9 @@ class Critic(nn.Module):
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
         obs = self.obs_in(objects, comm)
         action = self.action_in(action)
-        value = torch.cat([obs, action, forward_hidden], dim=-1)
-        value = self.mtrnn(value)
+        x = self.lin(torch.cat([obs, action, forward_hidden], dim=-1))
+        value = self.mtrnn(x, critic_hidden)
+        critic_hidden = value[:,-1].unsqueeze(1)
         value = self.value(value)
         return(value, critic_hidden)
     
@@ -120,7 +141,7 @@ if __name__ == "__main__":
                         ((episodes, steps, args.objects, args.object_shape), 
                          (episodes, steps, args.max_comm_len, args.comm_shape), 
                          (episodes, steps, args.action_shape),
-                         (episodes, steps, args.hidden_size),
+                         (episodes, steps, args.pvrnn_mtrnn_size),
                          (episodes, steps, args.hidden_size))))
 
 # %%
