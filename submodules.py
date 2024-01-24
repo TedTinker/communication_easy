@@ -176,7 +176,9 @@ class Objects_OUT(nn.Module):
         self.args = args
         
         self.objects_out = nn.Sequential(
-            nn.Linear(self.args.pvrnn_mtrnn_size + self.args.hidden_size, self.args.hidden_size), 
+            nn.Linear(
+                in_features = self.args.pvrnn_mtrnn_size + 2 * self.args.hidden_size, 
+                out_features = self.args.hidden_size), 
             nn.PReLU(),
             nn.Dropout(.2),
             nn.Linear(self.args.hidden_size, self.args.hidden_size), 
@@ -205,7 +207,7 @@ if __name__ == "__main__":
     print(objects_out)
     print()
     print(torch_summary(objects_out, 
-                        (episodes, steps, args.pvrnn_mtrnn_size + args.hidden_size)))
+                        (episodes, steps, args.pvrnn_mtrnn_size + 2 * args.hidden_size)))
     
     
 
@@ -217,7 +219,7 @@ class Comm_OUT(nn.Module):
         self.args = args
         
         self.comm_rnn = MTRNN(
-            input_size = self.args.pvrnn_mtrnn_size + self.args.hidden_size, 
+            input_size = self.args.pvrnn_mtrnn_size + 2 * self.args.hidden_size, 
             hidden_size = self.args.hidden_size, 
             time_constant = 1,
             args = self.args)
@@ -243,7 +245,7 @@ class Comm_OUT(nn.Module):
         if(len(h_w_action.shape) == 2):   h_w_action = h_w_action.unsqueeze(1)
         [h_w_action] = attach_list([h_w_action], self.args.device)
         episodes, steps = episodes_steps(h_w_action)
-        h_w_action = h_w_action.reshape(episodes * steps, 1, self.args.pvrnn_mtrnn_size + self.args.hidden_size)
+        h_w_action = h_w_action.reshape(episodes * steps, 1, self.args.pvrnn_mtrnn_size + 2 * self.args.hidden_size)
         comm_h = None
         comm_hs = []
         for i in range(self.args.max_comm_len):
@@ -267,7 +269,7 @@ if __name__ == "__main__":
     print(comm_out)
     print()
     print(torch_summary(comm_out, 
-                        (episodes, steps, args.pvrnn_mtrnn_size + args.hidden_size)))
+                        (episodes, steps, args.pvrnn_mtrnn_size + 2 * args.hidden_size)))
     
     
     
@@ -355,7 +357,8 @@ class Actor_Comm_OUT(nn.Module):
         self.comm_out_std = nn.Sequential(
             nn.Linear(
                 in_features = self.args.hidden_size, 
-                out_features = self.args.comm_shape))
+                out_features = self.args.comm_shape),
+            nn.Softplus())
         
         self.apply(init_weights)
         self.to(self.args.device)

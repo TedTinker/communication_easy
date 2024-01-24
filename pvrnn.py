@@ -5,7 +5,7 @@ from torchinfo import summary as torch_summary
 
 from utils import default_args, init_weights, var, sample, attach_list, detach_list, episodes_steps, pad_zeros
 from mtrnn import MTRNN
-from submodules import Obs_IN, Obs_OUT, Action_IN
+from submodules import Obs_IN, Obs_OUT, Action_IN, Comm_IN
 
 
 
@@ -28,28 +28,29 @@ class PVRNN_LAYER(nn.Module):
         if(self.bottom):
             self.obs_in = Obs_IN(self.args)
             self.action_in = Action_IN(self.args)
+            self.comm_in = Comm_IN(self.args)
             
         # Prior: Previous hidden state, plus action if bottom.  
         self.zp_mu = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.pvrnn_mtrnn_size + (self.args.hidden_size if self.bottom else 0), 
+                    in_features = self.args.pvrnn_mtrnn_size + (2 * self.args.hidden_size if self.bottom else 0), 
                     out_features = self.args.state_size), 
                 nn.Tanh())
         self.zp_std = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.pvrnn_mtrnn_size + (self.args.hidden_size if self.bottom else 0), 
+                    in_features = self.args.pvrnn_mtrnn_size + (2 * self.args.hidden_size if self.bottom else 0), 
                     out_features = self.args.state_size), 
                 nn.Softplus())
                             
         # Posterior: Previous hidden state, plus observation and action if bottom, plus lower-layer hidden state otherwise.
         self.zq_mu = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.pvrnn_mtrnn_size + (3 * self.args.hidden_size if self.bottom else self.args.pvrnn_mtrnn_size), 
+                    in_features = self.args.pvrnn_mtrnn_size + (4 * self.args.hidden_size if self.bottom else self.args.pvrnn_mtrnn_size), 
                     out_features = self.args.state_size), 
                 nn.Tanh())
         self.zq_std = nn.Sequential(
                 nn.Linear(
-                    in_features = self.args.pvrnn_mtrnn_size + (3 * self.args.hidden_size if self.bottom else self.args.pvrnn_mtrnn_size), 
+                    in_features = self.args.pvrnn_mtrnn_size + (4 * self.args.hidden_size if self.bottom else self.args.pvrnn_mtrnn_size), 
                     out_features = self.args.state_size), 
                 nn.Softplus())
                             
@@ -66,15 +67,16 @@ class PVRNN_LAYER(nn.Module):
     def forward(
         self, 
         prev_hidden_states, 
-        objects = None, comms = None, prev_actions = None, 
+        objects = None, comms = None, prev_actions = None, prev_comms_out = None, 
         hidden_states_below = None, 
         prev_hidden_states_above = None):
         
         if(self.bottom):
             obs = self.obs_in(objects, comms)
             prev_actions = self.action_in(prev_actions)
-            zp_inputs = torch.cat([prev_hidden_states, prev_actions], dim = -1)
-            zq_inputs = torch.cat([prev_hidden_states, obs, prev_actions], dim = -1)
+            prev_comms_out = self.comm_in(prev_comms_out)
+            zp_inputs = torch.cat([prev_hidden_states, prev_actions, prev_comms_out], dim = -1)
+            zq_inputs = torch.cat([prev_hidden_states, obs, prev_actions, prev_comms_out], dim = -1)
         else:
             zp_inputs = prev_hidden_states 
             zq_inputs = torch.cat([prev_hidden_states, hidden_states_below], dim = -1)
@@ -114,7 +116,8 @@ if __name__ == "__main__":
                         ((episodes, 1, args.pvrnn_mtrnn_size), 
                          (episodes, 1, args.objects, args.object_shape), 
                          (episodes, 1, args.max_comm_len, args.comm_shape),
-                         (episodes, 1, args.actions + args.objects))))
+                         (episodes, 1, args.actions + args.objects),
+                         (episodes, 1, args.max_comm_len, args.comm_shape))))
     
     bottom_layer = PVRNN_LAYER(bottom = True, args = args)
     
@@ -126,6 +129,7 @@ if __name__ == "__main__":
                          (episodes, 1, args.objects, args.object_shape), 
                          (episodes, 1, args.max_comm_len, args.comm_shape),
                          (episodes, 1, args.actions + args.objects),
+                         (episodes, 1, args.max_comm_len, args.comm_shape),
                          (1,), # No hidden_states_below 
                          (episodes, 1, args.pvrnn_mtrnn_size))))
     
@@ -137,8 +141,9 @@ if __name__ == "__main__":
     print(torch_summary(top_layer, 
                         ((episodes, 1, args.pvrnn_mtrnn_size), 
                          (1,), # No objects
-                         (1,), # No comms
+                         (1,), # No comms in
                          (1,), # No actions
+                         (1,), # No comms out 
                          (episodes, 1, args.pvrnn_mtrnn_size))))
     
     middle_layer = PVRNN_LAYER(args = args)
@@ -149,8 +154,9 @@ if __name__ == "__main__":
     print(torch_summary(middle_layer, 
                         ((episodes, 1, args.pvrnn_mtrnn_size), 
                          (1,), # No objects
-                         (1,), # No comms
+                         (1,), # No comms in
                          (1,), # No actions
+                         (1,), # comms out
                          (episodes, 1, args.pvrnn_mtrnn_size),
                          (episodes, 1, args.pvrnn_mtrnn_size))))
     
@@ -178,18 +184,20 @@ class PVRNN(nn.Module):
         self.apply(init_weights)
         self.to(args.device)
         
-    def predict(self, h, action):
-        h_w_actions = torch.cat([h, self.pvrnn_layers[0].action_in(action)], dim = -1)
+    def predict(self, h, action, comm_out):
+        h_w_actions = torch.cat([h, self.pvrnn_layers[0].action_in(action), self.pvrnn_layers[0].comm_in(comm_out)], dim = -1)
         pred_objects, pred_comms = self.predict_obs(h_w_actions)
         return(pred_objects,  pred_comms)
         
-    def bottom_to_top_step(self, prev_hidden_states, objects = None, comms = None, prev_actions = None):
+    def bottom_to_top_step(self, prev_hidden_states, objects = None, comms = None, prev_actions = None, prev_comms_out = None):
         if(objects != None and len(objects.shape) == 3): 
             objects = objects.unsqueeze(1)
         if(comms != None and len(comms.shape) == 3): 
             comms = comms.unsqueeze(1)
         if(prev_actions != None and len(prev_actions.shape) == 2): 
             prev_actions = prev_actions.unsqueeze(1)
+        if(prev_comms_out != None and len(prev_comms_out.shape) == 3): 
+            prev_comms_out = prev_comms_out.unsqueeze(1)
         
         zp_mu_list = []
         zp_std_list = []
@@ -202,7 +210,7 @@ class PVRNN(nn.Module):
             (zp_mu, zp_std, new_hidden_states_p), (zq_mu, zq_std, new_hidden_states_q) = \
                 self.pvrnn_layers[layer](
                     prev_hidden_states[:,layer].unsqueeze(1), 
-                    objects, comms, prev_actions,
+                    objects, comms, prev_actions, prev_comms_out,
                     new_hidden_states_list_q[-1] if layer > 0 else None, 
                     prev_hidden_states[:,layer+1].unsqueeze(1) if layer + 1 < self.args.layers else None)
     
@@ -220,7 +228,7 @@ class PVRNN(nn.Module):
             (zp_mu.unsqueeze(1), zp_std.unsqueeze(1), new_hidden_states_p.unsqueeze(1)),
             (zq_mu.unsqueeze(1), zq_std.unsqueeze(1), new_hidden_states_q.unsqueeze(1)))
     
-    def forward(self, prev_hidden_states, objects, comms, prev_actions):
+    def forward(self, prev_hidden_states, objects, comms, prev_actions, prev_comms_out):
         zp_mu_list = []
         zp_std_list = []
         zq_mu_list = []
@@ -232,7 +240,7 @@ class PVRNN(nn.Module):
         
         for step in range(steps):
             (zp_mu, zp_std, new_hidden_states_p), (zq_mu, zq_std, new_hidden_states_q) = \
-                self.bottom_to_top_step(prev_hidden_states, objects[:,step], comms[:,step], prev_actions[:,step])
+                self.bottom_to_top_step(prev_hidden_states, objects[:,step], comms[:,step], prev_actions[:,step], prev_comms_out[:,step])
             
             for l, o in zip(
                 [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list_p, new_hidden_states_list_q],
@@ -246,7 +254,7 @@ class PVRNN(nn.Module):
             lists[i] = torch.cat(lists[i], dim=1)
         zp_mu, zp_std, zq_mu, zq_std, new_hidden_states_p, new_hidden_states_q = lists
         
-        pred_objects, pred_comms = self.predict(new_hidden_states_q[:,:-1,0], prev_actions[:,1:])
+        pred_objects, pred_comms = self.predict(new_hidden_states_q[:,:-1,0], prev_actions[:,1:], prev_comms_out[:,1:])
         
         return(
             (zp_mu, zp_std, new_hidden_states_p),
@@ -269,7 +277,8 @@ if __name__ == "__main__":
                         ((episodes, args.layers, args.pvrnn_mtrnn_size), 
                          (episodes, steps+1, args.objects, args.object_shape), 
                          (episodes, steps+1, args.max_comm_len, args.comm_shape),
-                         (episodes, steps+1, args.actions + args.objects))))
+                         (episodes, steps+1, args.actions + args.objects),
+                         (episodes, steps+1, args.max_comm_len, args.comm_shape))))
 """
     args.layers = 5
     args.time_scales = [1, 1, 1, 1, 1]
@@ -283,6 +292,7 @@ if __name__ == "__main__":
                         ((episodes, args.layers, args.hidden_size), 
                          (episodes, steps+1, args.objects, args.object_shape), 
                          (episodes, steps+1, args.max_comm_len, args.comm_shape),
-                         (episodes, steps+1, args.actions + args.objects))))
+                         (episodes, steps+1, args.actions + args.objects),
+                         (episodes, steps+1, args.max_comm_len, args.comm_shape))))
 """
             

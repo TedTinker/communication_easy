@@ -31,8 +31,8 @@ def plot_episode(key, episode_dict, arg_name):
         text_list.append(objects)
         label_list.append("Objects")
 
-        comms = episode_dict["comms_1"][step]
-        text_list.append(comms)
+        comms_in = episode_dict["comms_in_1"][step]
+        text_list.append(comms_in)
         label_list.append("Comms")
         
         if step + 1 != steps:
@@ -49,16 +49,16 @@ def plot_episode(key, episode_dict, arg_name):
             text_list.append(objects_p)
             label_list.append("Predicted Objects (Prior)")
 
-            comms_p = episode_dict["prior_predicted_comms_1"][step]
-            text_list.append(comms_p)
+            comms_in_p = episode_dict["prior_predicted_comms_in_1"][step]
+            text_list.append(comms_in_p)
             label_list.append("Predicted Comms (Prior)")
 
             objects_q = episode_dict["posterior_predicted_objects_1"][step]
             text_list.append(objects_q)
             label_list.append("Predicted Objects (Posterior)")
 
-            comms_q = episode_dict["posterior_predicted_comms_1"][step]
-            text_list.append(comms_q)
+            comms_in_q = episode_dict["posterior_predicted_comms_in_1"][step]
+            text_list.append(comms_in_q)
             label_list.append("Predicted Comms (Posterior)")
                 
         for i, (text, label) in enumerate(zip(text_list, label_list)):

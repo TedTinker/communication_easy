@@ -62,14 +62,17 @@ class Actor(nn.Module):
         x = self.lin(torch.cat([obs, prev_action, forward_hidden], dim = -1))
         x = self.mtrnn(x, action_hidden)
         action_hidden = action_hidden[:,-1].unsqueeze(1)
-        #comm, comm_log_prob = self.comm(x)
+        comm, comm_log_prob = self.comm(x)
+        indices = torch.argmax(comm, dim=3)
+        comm = torch.zeros_like(comm)
+        comm.scatter_(3, indices.unsqueeze(3), 1)
         mu, std = var(x, self.mu, self.std, self.args)
         x = sample(mu, std, self.args.device)
         action = torch.tanh(x)
         log_prob = Normal(mu, std).log_prob(x) - torch.log(1 - action.pow(2) + 1e-6)
         log_prob = torch.mean(log_prob, -1).unsqueeze(-1)
-        #log_prob += comm_log_prob
-        return action, log_prob, action_hidden
+        log_prob += comm_log_prob
+        return action, comm, log_prob, action_hidden
     
     
     

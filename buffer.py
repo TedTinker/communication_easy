@@ -35,12 +35,15 @@ class RecurrentReplayBuffer:
             shape = (self.args.objects,self.args.shapes + self.args.colors), 
             before_and_after = True, 
             args = self.args)
-        self.communications = VariableBuffer(
+        self.communications_in = VariableBuffer(
             shape = (self.args.max_comm_len, self.args.comm_shape,), 
             before_and_after = True, 
             args = self.args)
         self.actions = VariableBuffer(
             shape = (self.args.action_shape,), 
+            args = self.args)
+        self.communications_out = VariableBuffer(
+            shape = (self.args.max_comm_len, self.args.comm_shape,), 
             args = self.args)
         self.recommended_actions = VariableBuffer(
             shape = (self.args.action_shape,), 
@@ -55,30 +58,33 @@ class RecurrentReplayBuffer:
     def push(
             self, 
             obj, 
-            communication, 
+            communication_in, 
             action, 
+            communication_out, 
             recommended_action,
             reward, 
             next_obj, 
-            next_communication, 
+            next_communication_in, 
             done):
         
         if self.time_ptr == 0:
             for buffer in [
                     self.objects, 
-                    self.communications, 
+                    self.communications_in, 
                     self.actions, 
+                    self.communications_out, 
                     self.recommended_actions,
                     self.rewards, 
                     self.dones, 
                     self.masks]:
                 buffer.reset_episode(self.episode_ptr)
 
-        communication = pad_zeros(communication, self.args.max_comm_len)
-        next_communication = pad_zeros(next_communication, self.args.max_comm_len)
+        communication_in = pad_zeros(communication_in, self.args.max_comm_len)
+        next_communication_in = pad_zeros(next_communication_in, self.args.max_comm_len)
         self.objects.push(self.episode_ptr, self.time_ptr, obj)
-        self.communications.push(self.episode_ptr, self.time_ptr, communication)
+        self.communications_in.push(self.episode_ptr, self.time_ptr, communication_in)
         self.actions.push(self.episode_ptr, self.time_ptr, action)
+        self.communications_out.push(self.episode_ptr, self.time_ptr, communication_out)
         self.recommended_actions.push(self.episode_ptr, self.time_ptr, recommended_action)
         self.rewards.push(self.episode_ptr, self.time_ptr, reward)
         self.dones.push(self.episode_ptr, self.time_ptr, done)
@@ -87,7 +93,7 @@ class RecurrentReplayBuffer:
         self.time_ptr += 1
         if done or self.time_ptr >= self.max_episode_len:
             self.objects.push(self.episode_ptr, self.time_ptr,  next_obj)
-            self.communications.push(self.episode_ptr, self.time_ptr, next_communication)
+            self.communications_in.push(self.episode_ptr, self.time_ptr, next_communication_in)
             self.episode_ptr = (self.episode_ptr + 1) % self.capacity
             self.time_ptr = 0
             self.num_episodes = min(self.num_episodes + 1, self.capacity)
@@ -98,8 +104,9 @@ class RecurrentReplayBuffer:
             indices = np.random.choice(self.num_episodes, self.num_episodes, replace=False)
             batch = (
                 self.objects.sample(indices),
-                self.communications.sample(indices),
+                self.communications_in.sample(indices),
                 self.actions.sample(indices),
+                self.communications_out.sample(indices),
                 self.recommended_actions.sample(indices),
                 self.rewards.sample(indices),
                 self.dones.sample(indices),
@@ -108,8 +115,9 @@ class RecurrentReplayBuffer:
             indices = np.random.choice(self.num_episodes, batch_size, replace=False)
             batch = (
                 self.objects.sample(indices),
-                self.communications.sample(indices),
+                self.communications_in.sample(indices),
                 self.actions.sample(indices),
+                self.communications_out.sample(indices),
                 self.recommended_actions.sample(indices),
                 self.rewards.sample(indices),
                 self.dones.sample(indices),

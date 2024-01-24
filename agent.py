@@ -128,31 +128,34 @@ class Agent:
                 
     
     
-    def step_in_episode(self, prev_action_1, hq_1, ha_1, prev_action_2, hq_2, ha_2, push):
+    def step_in_episode(self, prev_action_1, prev_comm_out_1, hq_1, ha_1, prev_action_2, prev_comm_out_2, hq_2, ha_2, push):
         with torch.no_grad():
+            comm_from_parent = self.task.task.parent
             obj_1, obj_2, parent_comm = self.task.obs()
             recommended_action_1 = self.task.task.get_recommended_action()
-            (_, _, hp_1), (_, _, hq_1) = self.forward.bottom_to_top_step(hq_1, obj_1, parent_comm, prev_action_1) 
-            action_1, _, ha_1 = self.actor(obj_1, parent_comm, prev_action_1, hq_1[:,:,0].detach(), ha_1) 
+            (_, _, hp_1), (_, _, hq_1) = self.forward.bottom_to_top_step(hq_1, obj_1, parent_comm if comm_from_parent else prev_comm_out_2, prev_action_1, prev_comm_out_1) 
+            action_1, comm_out_1, _, ha_1 = self.actor(obj_1, parent_comm if comm_from_parent else prev_comm_out_2, prev_action_1, hq_1[:,:,0].detach(), ha_1) 
             if(self.task.task.parent): 
                 action_2 = None 
+                comm_out_2 = None
                 hp_2 = None
                 hq_2 = None
             else:
                 recommended_action_2 = self.task.task.get_recommended_action(agent_1 = False)
-                (_, _, hp_2), (_, _, hq_2) = self.forward.bottom_to_top_step(hq_2, obj_2, parent_comm, prev_action_2) 
-                action_2, _, ha_2 = self.actor(obj_2, parent_comm, prev_action_2, hq_2[:,:,0].detach(), ha_2) 
+                (_, _, hp_2), (_, _, hq_2) = self.forward.bottom_to_top_step(hq_2, obj_2, prev_comm_out_1, prev_action_2, prev_comm_out_2) 
+                action_2, comm_out_2, _, ha_2 = self.actor(obj_2, prev_comm_out_1, prev_action_2, hq_2[:,:,0].detach(), ha_2) 
             reward, done, win = self.task.action(action_1, action_2)
             next_obj_1, next_obj_2, next_parent_comm = self.task.obs()
             
             to_push_1 = [
                 obj_1,
-                parent_comm,
+                parent_comm if comm_from_parent else prev_comm_out_2,
                 action_1,
+                comm_out_1,
                 recommended_action_1,
                 reward,
                 next_obj_1,
-                next_parent_comm,
+                next_parent_comm if comm_from_parent else comm_out_2,
                 done]
             
             if(self.task.task.parent): 
@@ -160,15 +163,16 @@ class Agent:
             else:
                 to_push_2 = [
                     obj_2,
-                    parent_comm,
+                    prev_comm_out_1,
                     action_2,
+                    comm_out_2,
                     recommended_action_2,
                     reward,
                     next_obj_2,
-                    next_parent_comm,
+                    comm_out_1,
                     done]
         torch.cuda.empty_cache()
-        return(action_1, hp_1.squeeze(1), hq_1.squeeze(1), ha_1, action_2, None if hp_2 == None else hp_2.squeeze(1), None if hq_2 == None else hq_2.squeeze(1), ha_2, reward, done, win, to_push_1, to_push_2)
+        return(action_1, comm_out_1, hp_1.squeeze(1), hq_1.squeeze(1), ha_1, action_2, comm_out_2, None if hp_2 == None else hp_2.squeeze(1), None if hq_2 == None else hq_2.squeeze(1), ha_2, reward, done, win, to_push_1, to_push_2)
             
            
     
@@ -176,12 +180,16 @@ class Agent:
         done = False
         total_reward = 0
         steps = 0
+        
         to_push_list_1 = []
         prev_action_1 = torch.zeros((1, 1, self.args.action_shape))
+        prev_comm_out_1 = torch.zeros((1, 1, self.args.max_comm_len, self.args.comm_shape))
         hq_1 = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
         ha_1 = torch.zeros((1, 1, self.args.hidden_size)) 
+        
         to_push_list_2 = []
         prev_action_2 = torch.zeros((1, 1, self.args.action_shape))
+        prev_comm_out_2 = torch.zeros((1, 1, self.args.max_comm_len, self.args.comm_shape))
         hq_2 = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
         ha_2 = torch.zeros((1, 1, self.args.hidden_size)) 
         
@@ -191,7 +199,9 @@ class Agent:
             self.steps += 1 
             if(not done):
                 steps += 1
-                prev_action_1, hp_1, hq_1, ha_1, prev_action_2, hp_2, hq_2, ha_2, reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, hq_1, ha_1, prev_action_2, hq_2, ha_2, push)
+                prev_action_1, prev_comm_out_1, hp_1, hq_1, ha_1, \
+                    prev_action_2, prev_comm_out_2, hp_2, hq_2, ha_2, \
+                        reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, prev_comm_out_1, hq_1, ha_1, prev_action_2, prev_comm_out_2, hq_2, ha_2, push)
                 to_push_list_1.append(to_push_1)
                 to_push_list_2.append(to_push_2)
                 total_reward += reward
@@ -199,17 +209,17 @@ class Agent:
                 plot_data = self.epoch(self.args.batch_size)
                 if(plot_data == False): pass
                 else:
-                    accuracy, object_loss, comm_loss, complexity, alpha, actor, critics, e, q, ic, ie, ii, prediction_error, hidden_state = plot_data
+                    accuracy, object_loss, comm_loss, complexity, alpha_loss, actor_loss, critic_losses, e, q, ic, ie, ii, prediction_error, hidden_state = plot_data
                     if(self.epochs == 1 or self.epochs >= sum(self.args.epochs) or self.epochs % self.args.keep_data == 0):
                         self.plot_dict["accuracy"].append(accuracy)
                         self.plot_dict["object_loss"].append(object_loss)
                         self.plot_dict["comm_loss"].append(comm_loss)
                         self.plot_dict["complexity"].append(complexity)
-                        self.plot_dict["alpha"].append(alpha)
-                        self.plot_dict["actor"].append(actor)
-                        for layer, f in enumerate(critics):
+                        self.plot_dict["alpha"].append(alpha_loss)
+                        self.plot_dict["actor"].append(actor_loss)
+                        for layer, f in enumerate(critic_losses):
                             self.plot_dict["critics"][layer].append(f)    
-                        self.plot_dict["critics"].append(critics)
+                        self.plot_dict["critics"].append(critic_losses)
                         self.plot_dict["extrinsic"].append(e)
                         self.plot_dict["q"].append(q)
                         self.plot_dict["intrinsic_curiosity"].append(ic)
@@ -219,27 +229,29 @@ class Agent:
                         for layer, f in enumerate(hidden_state):
                             self.plot_dict["hidden_state"][layer].append(f)    
         for to_push in to_push_list_1:
-            obj, comm, action, recommended_action, reward, next_obj, next_comm, done = to_push
+            obj, comm_in, action, comm_out, recommended_action, reward, next_obj, next_comm_in, done = to_push
             self.memory.push(
                 obj, 
-                comm, 
+                comm_in, 
                 action, 
+                comm_out,
                 recommended_action,
                 reward, 
                 next_obj, 
-                next_comm, 
+                next_comm_in, 
                 done)
         for to_push in to_push_list_2:
             if(to_push != None):
-                obj, comm, action, recommended_action, reward, next_obj, next_comm, done = to_push
+                obj, comm_in, action, comm_out, recommended_action, reward, next_obj, next_comm_in, done = to_push
                 self.memory.push(
                     obj, 
-                    comm, 
+                    comm_in, 
                     action, 
+                    comm_out,
                     recommended_action,
                     reward, 
                     next_obj, 
-                    next_comm, 
+                    next_comm_in, 
                     done)
         self.plot_dict["steps"].append(steps)
         self.plot_dict["rewards"].append(total_reward)
@@ -252,10 +264,14 @@ class Agent:
         done = False
         total_reward = 0
         steps = 0
+        
         prev_action_1 = torch.zeros((1, 1, self.args.action_shape))
+        prev_comm_out_1 = torch.zeros((1, 1, self.args.max_comm_len, self.args.comm_shape))
         hq_1 = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
         ha_1 = torch.zeros((1, 1, self.args.hidden_size)) 
+        
         prev_action_2 = torch.zeros((1, 1, self.args.action_shape))
+        prev_comm_out_2 = torch.zeros((1, 1, self.args.max_comm_len, self.args.comm_shape))
         hq_2 = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
         ha_2 = torch.zeros((1, 1, self.args.hidden_size)) 
         
@@ -265,7 +281,9 @@ class Agent:
             self.steps += 1 
             if(not done):
                 steps += 1
-                prev_action_1, hp_1, hq_1, ha_1, prev_action_2, hp_2, hq_2, ha_2, reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, hq_1, ha_1, prev_action_2, hq_2, ha_2, push = False)
+                prev_action_1, prev_comm_out_1, hp_1, hq_1, ha_1, \
+                    prev_action_2, prev_comm_out_2, hp_2, hq_2, ha_2, \
+                        reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, prev_comm_out_1, hq_1, ha_1, prev_action_2, prev_comm_out_2, hq_2, ha_2, push = False)
                 total_reward += reward
         self.plot_dict["gen_rewards"].append(total_reward)
         
@@ -273,68 +291,82 @@ class Agent:
         
     def save_episodes(self):
         with torch.no_grad():
+            comm_from_parent = self.task.task.parent
             if(self.args.agents_per_episode_dict != -1 and self.agent_num > self.args.agents_per_episode_dict): return
             for episode_num in range(self.args.episodes_in_episode_dict):
-                hps_1 = []
-                hqs_1 = []
-                hps_2 = []
-                hqs_2 = []
                 # Upgrade for two agents!
                 episode_dict = {
                     "objects_1" : [],
                     "objects_2" : [],
-                    "comms_1" : [],
-                    "comms_2" : [],
+                    "comms_in_1" : [],
+                    "comms_in_2" : [],
                     "actions_1" : [],
                     "actions_2" : [],
+                    "comms_out_1" : [],
+                    "comms_out_2" : [],
                     "rewards" : [],
                     "prior_predicted_objects_1" : [],
-                    "prior_predicted_comms_1" : [],
+                    "prior_predicted_comms_in_1" : [],
                     "posterior_predicted_objects_1" : [],
-                    "posterior_predicted_comms_1" : [],
+                    "posterior_predicted_comms_in_1" : [],
                     "prior_predicted_objects_2" : [],
-                    "prior_predicted_comms_2" : [],
+                    "prior_predicted_comms_in_2" : [],
                     "posterior_predicted_objects_2" : [],
-                    "posterior_predicted_comms_2" : []}
+                    "posterior_predicted_comms_in_2" : []}
                 done = False
+                
+                hps_1 = []
+                hqs_1 = []
                 prev_action_1 = torch.zeros((1, 1, self.args.action_shape))
+                prev_comm_out_1 = torch.zeros((1, 1, self.args.max_comm_len, self.args.comm_shape))
                 hq_1 = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
                 ha_1 = torch.zeros((1, 1, self.args.hidden_size)) 
+                
+                hps_2 = []
+                hqs_2 = []
                 prev_action_2 = torch.zeros((1, 1, self.args.action_shape))
+                prev_comm_out_2 = torch.zeros((1, 1, self.args.max_comm_len, self.args.comm_shape))
                 hq_2 = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
                 ha_2 = torch.zeros((1, 1, self.args.hidden_size)) 
+                
                 self.task = self.task_runners[self.task_name]
                 self.task.begin()        
                 obj_1, obj_2, parent_comm = self.task.obs()
                 episode_dict["objects_1"].append(multihots_to_string(obj_1))
                 episode_dict["objects_2"].append(None if obj_2 == None else multihots_to_string(obj_2))
-                episode_dict["comms_1"].append(onehots_to_string(parent_comm))
-                episode_dict["comms_2"].append(onehots_to_string(parent_comm)) 
+                episode_dict["comms_in_1"].append(onehots_to_string(parent_comm if comm_from_parent else prev_comm_out_2))
+                episode_dict["comms_in_2"].append(onehots_to_string(prev_comm_out_1)) 
                 for step in range(self.args.max_steps):
                     if(not done):
-                        prev_action_1, hp_1, hq_1, ha_1, prev_action_2, hp_2, hq_2, ha_2, reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, hq_1, ha_1, prev_action_2, hq_2, ha_2, push = False)
+                        prev_action_1, prev_comm_out_1, hp_1, hq_1, ha_1, \
+                            prev_action_2, prev_comm_out_2, hp_2, hq_2, ha_2, \
+                                reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, prev_comm_out_1, hq_1, ha_1, prev_action_2, prev_comm_out_2, hq_2, ha_2, push = False)
                         episode_dict["actions_1"].append(prev_action_1)
                         episode_dict["actions_2"].append(prev_action_2)
+                        episode_dict["comms_out_1"].append(prev_comm_out_1)
+                        episode_dict["comms_out_2"].append(prev_comm_out_2)
                         episode_dict["rewards"].append(str(reward))
                         obj_1, obj_2, parent_comm = self.task.obs()
                         episode_dict["objects_1"].append(multihots_to_string(obj_1))
                         episode_dict["objects_2"].append(None if obj_2 == None else multihots_to_string(obj_2))
-                        episode_dict["comms_1"].append(onehots_to_string(parent_comm))
-                        episode_dict["comms_2"].append(onehots_to_string(parent_comm)) 
+                        episode_dict["comms_in_1"].append(onehots_to_string(parent_comm if comm_from_parent else prev_comm_out_2))
+                        episode_dict["comms_in_2"].append(onehots_to_string(prev_comm_out_1)) 
                         hps_1.append(hp_1[:,0].unsqueeze(0))
                         hqs_1.append(hq_1[:,0].unsqueeze(0))
                         hps_2.append(hp_2 if hp_2 == None else hp_2[:,0].unsqueeze(0))
                         hqs_2.append(hq_2 if hq_2 == None else hq_2[:,0].unsqueeze(0))
+                        
                 hp_1 = torch.cat(hps_1, dim = 1)
                 hq_1 = torch.cat(hqs_1, dim = 1)
                 actions_1 = torch.cat(episode_dict["actions_1"], dim = 1)
-                pred_objects_p, pred_comm_p = self.forward.predict(hp_1, actions_1)
-                pred_objects_q, pred_comm_q = self.forward.predict(hq_1, actions_1)
+                comms_out_1 = torch.cat(episode_dict["comms_out_1"], dim = 1)
+                pred_objects_p, pred_comm_in_p = self.forward.predict(hp_1, actions_1, comms_out_1) # Pred should have comm out? 
+                pred_objects_q, pred_comm_in_q = self.forward.predict(hq_1, actions_1, comms_out_1)
                 for step in range(pred_objects_p.shape[1]):
                     episode_dict["prior_predicted_objects_1"].append(multihots_to_string(pred_objects_p[0,step]))
-                    episode_dict["prior_predicted_comms_1"].append(onehots_to_string(pred_comm_p[0,step]))
+                    episode_dict["prior_predicted_comms_in_1"].append(onehots_to_string(pred_comm_in_p[0,step]))
                     episode_dict["posterior_predicted_objects_1"].append(multihots_to_string(pred_objects_q[0,step]))
-                    episode_dict["posterior_predicted_comms_1"].append(onehots_to_string(pred_comm_q[0,step]))
+                    episode_dict["posterior_predicted_comms_in_1"].append(onehots_to_string(pred_comm_in_q[0,step]))
                 #if(self.agent_num == 1):
                 #    for step in range(hp_1.shape[1]):
                 #        print("\nIn Saving Episode:")
@@ -342,6 +374,27 @@ class Agent:
                 #        print("Prior:", episode_dict["prior_predicted_comms_1"][step])
                 #        print("Postr:", episode_dict["posterior_predicted_comms_1"][step])
                 #        print("\n")
+                
+                if(not comm_from_parent):
+                    hp_2 = torch.cat(hps_2, dim = 1)
+                    hq_2 = torch.cat(hqs_2, dim = 1)
+                    actions_2 = torch.cat(episode_dict["actions_2"], dim = 1)
+                    comms_out_2 = torch.cat(episode_dict["comms_out_2"], dim = 1)
+                    pred_objects_p, pred_comm_in_p = self.forward.predict(hp_2, actions_2, comms_out_2) # Pred should have comm out? 
+                    pred_objects_q, pred_comm_in_q = self.forward.predict(hq_2, actions_2, comms_out_2)
+                    for step in range(pred_objects_p.shape[1]):
+                        episode_dict["prior_predicted_objects_2"].append(multihots_to_string(pred_objects_p[0,step]))
+                        episode_dict["prior_predicted_comms_in_2"].append(onehots_to_string(pred_comm_in_p[0,step]))
+                        episode_dict["posterior_predicted_objects_2"].append(multihots_to_string(pred_objects_q[0,step]))
+                        episode_dict["posterior_predicted_comms_in_2"].append(onehots_to_string(pred_comm_in_q[0,step]))
+                    #if(self.agent_num == 1):
+                    #    for step in range(hp_2.shape[1]):
+                    #        print("\nIn Saving Episode:")
+                    #        print("Real: ", episode_dict["comms_2"][step])
+                    #        print("Prior:", episode_dict["prior_predicted_comms_2"][step])
+                    #        print("Postr:", episode_dict["posterior_predicted_comms_2"][step])
+                    #        print("\n")
+                
                 self.plot_dict["episode_dicts"]["{}_{}_{}".format(self.agent_num, self.epochs, episode_num)] = episode_dict
         
         
@@ -359,15 +412,17 @@ class Agent:
                 
         self.epochs += 1
 
-        objects, comms, actions, recommended_actions, rewards, dones, masks = batch
+        objects, comms_in, actions, comms_out, recommended_actions, rewards, dones, masks = batch
         objects = torch.from_numpy(objects)
-        comms = torch.from_numpy(comms)
+        comms_in = torch.from_numpy(comms_in)
         actions = torch.from_numpy(actions)
+        comms_out = torch.from_numpy(comms_out)
         recommended_actions = torch.from_numpy(recommended_actions)
         rewards = torch.from_numpy(rewards)
         dones = torch.from_numpy(dones)
         masks = torch.from_numpy(masks)
         actions = torch.cat([torch.zeros(actions[:,0].unsqueeze(1).shape).to(self.args.device), actions], dim = 1)
+        comms_out = torch.cat([torch.zeros(comms_out[:,0].unsqueeze(1).shape).to(self.args.device), comms_out], dim = 1)
         all_masks = torch.cat([torch.ones(masks.shape[0], 1, 1).to(self.args.device), masks], dim = 1)   
         episodes = rewards.shape[0]
         steps = rewards.shape[1]
@@ -380,7 +435,7 @@ class Agent:
                 
         
         # Train forward
-        (zp_mu, zp_std, hps), (zq_mu, zq_std, hqs), (pred_objects, pred_comms) = self.forward(torch.zeros((episodes, self.args.layers, self.args.pvrnn_mtrnn_size)), objects, comms, actions)
+        (zp_mu, zp_std, hps), (zq_mu, zq_std, hqs), (pred_objects, pred_comms) = self.forward(torch.zeros((episodes, self.args.layers, self.args.pvrnn_mtrnn_size)), objects, comms_in, actions, comms_out)
         hqs = hqs[:,:,0]
         
         #if(self.agent_num == 1):
@@ -412,11 +467,11 @@ class Agent:
         object_loss = shape_loss.mean(-1).unsqueeze(-1) * masks
         object_loss += color_loss.mean(-1).unsqueeze(-1) * masks
         
-        real_comm_mask, _ = create_comm_mask(comms[:,1:])
+        real_comm_mask, _ = create_comm_mask(comms_in[:,1:])
         pred_comm_mask, _ = create_comm_mask(pred_comms)
         comm_mask = combined_mask = real_comm_mask.int() | pred_comm_mask.int()
         
-        real_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
+        real_comms = comms_in[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
         real_comms = torch.argmax(real_comms, dim = -1)
         pred_comms = pred_comms.reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
     
@@ -458,10 +513,10 @@ class Agent:
                 
         # Train critics
         with torch.no_grad():
-            new_actions, log_pis_next, _ = self.actor(objects, comms, actions, hqs.detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            new_actions, new_comms_out, log_pis_next, _ = self.actor(objects, comms_in, actions, hqs.detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             Q_target_nexts = []
             for i in range(self.args.critics):
-                Q_target_next, _ = self.critic_targets[i](objects, comms, new_actions, hqs.detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+                Q_target_next, _ = self.critic_targets[i](objects, comms_in, new_actions, hqs.detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
                 Q_target_next[:,1:]
                 Q_target_nexts.append(Q_target_next)
             log_pis_next = log_pis_next[:,1:]
@@ -474,7 +529,7 @@ class Agent:
         critic_losses = []
         Qs = []
         for i in range(self.args.critics):
-            Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            Q, _ = self.critics[i](objects[:,:-1], comms_in[:,:-1], actions[:,1:], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             critic_loss = 0.5*F.mse_loss(Q*masks, Q_targets*masks)
             critic_losses.append(critic_loss)
             Qs.append(Q[0,0].item())
@@ -490,7 +545,7 @@ class Agent:
         
         # Train alpha
         if self.args.alpha == None:
-            _, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            _, _, log_pis, _ = self.actor(objects[:,:-1], comms_in[:,:-1], actions[:,:-1], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             alpha_loss = -(self.log_alpha.to(self.args.device) * (log_pis + self.target_entropy))*masks
             alpha_loss = alpha_loss.mean() / masks.mean()
             self.alpha_opt.zero_grad()
@@ -507,7 +562,7 @@ class Agent:
         if self.epochs % self.args.d == 0:
             if self.args.alpha == None: alpha = self.alpha 
             else:                       alpha = self.args.alpha
-            new_actions, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            new_actions, new_comms_out, log_pis, _ = self.actor(objects[:,:-1], comms_in[:,:-1], actions[:,:-1], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             if self.args.action_prior == "normal":
                 loc = torch.zeros(self.args.action_shape, dtype=torch.float64).to(self.args.device)
                 n = self.args.action_shape
@@ -518,7 +573,7 @@ class Agent:
                 policy_prior_log_prrgbd = 0.0
             Qs = []
             for i in range(self.args.critics):
-                Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+                Q, _ = self.critics[i](objects[:,:-1], comms_in[:,:-1], new_actions, hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
                 Qs.append(Q)
             Qs_stacked = torch.stack(Qs, dim=0)
             Q, _ = torch.min(Qs_stacked, dim=0)

@@ -2,6 +2,7 @@
 
 # To do:
 # Fix forward-collapse.
+# Don't forget to add comms_out to actor and critic!
 # Add critic-guesses in saved episodes.
 # Plot win-rates for generalization-tests.
 # Add double-agent scenario. 
@@ -197,9 +198,9 @@ parser.add_argument('--epochs_per_gen_test', type=int,        default = 10,
 
 parser.add_argument('--epochs_per_episode_dict',type=int,        default = 200,
                     help='How many epochs should pass before saving an episode.')
-parser.add_argument('--agents_per_episode_dict',type=int,        default = 10,
+parser.add_argument('--agents_per_episode_dict',type=int,        default = 3,
                     help='How many agents to save episodes.')
-parser.add_argument('--episodes_in_episode_dict',type=int,       default = 2,
+parser.add_argument('--episodes_in_episode_dict',type=int,       default = 1,
                     help='How many episodes to save per agent.')
 
 parser.add_argument('--epochs_per_agent_list',type=int,       default = 100000,
