@@ -8,7 +8,7 @@ from torchinfo import summary as torch_summary
 
 from utils import default_args, detach_list, attach_list, print, init_weights, episodes_steps, var, sample
 from mtrnn import MTRNN
-from submodules import Obs_IN, Action_IN, Actor_Comm_OUT
+from submodules import Obs_IN, Action_IN, Actor_Comm_OUT, Comm_IN
 
 
 
@@ -28,10 +28,11 @@ class Actor(nn.Module):
         
         self.obs_in = Obs_IN(args)
         self.action_in = Action_IN(self.args)
+        self.comm_in = Comm_IN(self.args)
 
         self.lin = nn.Sequential(
             nn.Linear(
-                in_features = self.args.pvrnn_mtrnn_size + 3 * args.hidden_size, 
+                in_features = self.args.pvrnn_mtrnn_size + 4 * args.hidden_size, 
                 out_features = args.hidden_size),
             nn.PReLU(),
             nn.Dropout(.2))
@@ -55,11 +56,12 @@ class Actor(nn.Module):
         self.apply(init_weights)
         self.to(args.device)
 
-    def forward(self, objects, comm, prev_action, forward_hidden, action_hidden):
+    def forward(self, objects, comm, prev_action, prev_comm_out, forward_hidden, action_hidden):
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
         obs = self.obs_in(objects, comm)
         prev_action = self.action_in(prev_action)
-        x = self.lin(torch.cat([obs, prev_action, forward_hidden], dim = -1))
+        prev_comm_out = self.comm_in(prev_comm_out)
+        x = self.lin(torch.cat([obs, prev_action, prev_comm_out, forward_hidden], dim = -1))
         x = self.mtrnn(x, action_hidden)
         action_hidden = action_hidden[:,-1].unsqueeze(1)
         comm, comm_log_prob = self.comm(x)
@@ -87,6 +89,7 @@ if __name__ == "__main__":
                         ((episodes, steps, args.objects, args.object_shape), 
                          (episodes, steps, args.max_comm_len, args.comm_shape), 
                          (episodes, steps, args.action_shape),
+                         (episodes, steps, args.max_comm_len, args.comm_shape),
                          (episodes, steps, args.pvrnn_mtrnn_size),
                          (episodes, steps, args.hidden_size))))
 
@@ -101,10 +104,11 @@ class Critic(nn.Module):
         
         self.obs_in = Obs_IN(self.args)
         self.action_in = Action_IN(self.args)
+        self.comm_in = Comm_IN(self.args)
         
         self.lin = nn.Sequential(
             nn.Linear(
-                in_features = self.args.pvrnn_mtrnn_size + 3 * self.args.hidden_size,
+                in_features = self.args.pvrnn_mtrnn_size + 4 * self.args.hidden_size,
                 out_features = self.args.hidden_size),
             nn.PReLU())
         
@@ -124,12 +128,13 @@ class Critic(nn.Module):
                 in_features = self.args.hidden_size,
                 out_features = 1))
         
-    def forward(self, objects, comm, action, forward_hidden, critic_hidden):
+    def forward(self, objects, comm, action, comm_out, forward_hidden, critic_hidden):
         if(len(action.shape) == 2): action = action.unsqueeze(1)
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
         obs = self.obs_in(objects, comm)
         action = self.action_in(action)
-        x = self.lin(torch.cat([obs, action, forward_hidden], dim=-1))
+        comm_out = self.comm_in(comm_out)
+        x = self.lin(torch.cat([obs, action, comm_out, forward_hidden], dim=-1))
         value = self.mtrnn(x, critic_hidden)
         critic_hidden = value[:,-1].unsqueeze(1)
         value = self.value(value)
@@ -148,6 +153,7 @@ if __name__ == "__main__":
                         ((episodes, steps, args.objects, args.object_shape), 
                          (episodes, steps, args.max_comm_len, args.comm_shape), 
                          (episodes, steps, args.action_shape),
+                         (episodes, steps, args.max_comm_len, args.comm_shape),
                          (episodes, steps, args.pvrnn_mtrnn_size),
                          (episodes, steps, args.hidden_size))))
 
