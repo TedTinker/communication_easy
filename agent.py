@@ -11,7 +11,7 @@ from itertools import accumulate
 from copy import deepcopy
 import matplotlib.pyplot as plt
 
-from utils import default_args, dkl, print, calculate_similarity, onehots_to_string, multihots_to_string
+from utils import default_args, dkl, print, calculate_similarity, onehots_to_string, multihots_to_string, create_comm_mask
 from task import Task, Task_Runner
 from buffer import RecurrentReplayBuffer
 from pvrnn import PVRNN
@@ -133,17 +133,17 @@ class Agent:
             obj_1, obj_2, parent_comm = self.task.obs()
             recommended_action_1 = self.task.task.get_recommended_action()
             (_, _, hp_1), (_, _, hq_1) = self.forward.bottom_to_top_step(hq_1, obj_1, parent_comm, prev_action_1) 
-            action_1, _, ha_1 = self.actor(obj_1, parent_comm, prev_action_1, hq_1[:,:,0].clone().detach(), ha_1) 
+            action_1, _, ha_1 = self.actor(obj_1, parent_comm, prev_action_1, hq_1[:,:,0].detach(), ha_1) 
             if(self.task.task.parent): 
                 action_2 = None 
                 hp_2 = None
+                hq_2 = None
             else:
                 recommended_action_2 = self.task.task.get_recommended_action(agent_1 = False)
                 (_, _, hp_2), (_, _, hq_2) = self.forward.bottom_to_top_step(hq_2, obj_2, parent_comm, prev_action_2) 
-                action_2, _, ha_2 = self.actor(obj_2, parent_comm, prev_action_2, hq_2[:,:,0].clone().detach(), ha_2) 
+                action_2, _, ha_2 = self.actor(obj_2, parent_comm, prev_action_2, hq_2[:,:,0].detach(), ha_2) 
             reward, done, win = self.task.action(action_1, action_2)
             next_obj_1, next_obj_2, next_parent_comm = self.task.obs()
-            # Save stuff to push and push later, for both agents.
             
             to_push_1 = [
                 obj_1,
@@ -167,17 +167,6 @@ class Agent:
                     next_obj_2,
                     next_parent_comm,
                     done]
-            
-            if(push): 
-                self.memory.push(
-                    obj_1, 
-                    parent_comm, 
-                    action_1, 
-                    recommended_action_1,
-                    reward, 
-                    next_obj_1, 
-                    next_parent_comm, 
-                    done)
         torch.cuda.empty_cache()
         return(action_1, hp_1.squeeze(1), hq_1.squeeze(1), ha_1, action_2, None if hp_2 == None else hp_2.squeeze(1), None if hq_2 == None else hq_2.squeeze(1), ha_2, reward, done, win, to_push_1, to_push_2)
             
@@ -203,6 +192,8 @@ class Agent:
             if(not done):
                 steps += 1
                 prev_action_1, hp_1, hq_1, ha_1, prev_action_2, hp_2, hq_2, ha_2, reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, hq_1, ha_1, prev_action_2, hq_2, ha_2, push)
+                to_push_list_1.append(to_push_1)
+                to_push_list_2.append(to_push_2)
                 total_reward += reward
             if(self.steps % self.args.steps_per_epoch == 0):
                 plot_data = self.epoch(self.args.batch_size)
@@ -227,6 +218,29 @@ class Agent:
                         self.plot_dict["prediction_error"].append(prediction_error)
                         for layer, f in enumerate(hidden_state):
                             self.plot_dict["hidden_state"][layer].append(f)    
+        for to_push in to_push_list_1:
+            obj, comm, action, recommended_action, reward, next_obj, next_comm, done = to_push
+            self.memory.push(
+                obj, 
+                comm, 
+                action, 
+                recommended_action,
+                reward, 
+                next_obj, 
+                next_comm, 
+                done)
+        for to_push in to_push_list_2:
+            if(to_push != None):
+                obj, comm, action, recommended_action, reward, next_obj, next_comm, done = to_push
+                self.memory.push(
+                    obj, 
+                    comm, 
+                    action, 
+                    recommended_action,
+                    reward, 
+                    next_obj, 
+                    next_comm, 
+                    done)
         self.plot_dict["steps"].append(steps)
         self.plot_dict["rewards"].append(total_reward)
         self.plot_dict["wins"].append(win)
@@ -267,14 +281,21 @@ class Agent:
                 hqs_2 = []
                 # Upgrade for two agents!
                 episode_dict = {
-                    "objects" : [],
-                    "comms" : [],
-                    "actions" : [],
+                    "objects_1" : [],
+                    "objects_2" : [],
+                    "comms_1" : [],
+                    "comms_2" : [],
+                    "actions_1" : [],
+                    "actions_2" : [],
                     "rewards" : [],
-                    "prior_predicted_objects" : [],
-                    "prior_predicted_comms" : [],
-                    "posterior_predicted_objects" : [],
-                    "posterior_predicted_comms" : []}
+                    "prior_predicted_objects_1" : [],
+                    "prior_predicted_comms_1" : [],
+                    "posterior_predicted_objects_1" : [],
+                    "posterior_predicted_comms_1" : [],
+                    "prior_predicted_objects_2" : [],
+                    "prior_predicted_comms_2" : [],
+                    "posterior_predicted_objects_2" : [],
+                    "posterior_predicted_comms_2" : []}
                 done = False
                 prev_action_1 = torch.zeros((1, 1, self.args.action_shape))
                 hq_1 = torch.zeros((1, self.args.layers, self.args.pvrnn_mtrnn_size)) 
@@ -285,26 +306,42 @@ class Agent:
                 self.task = self.task_runners[self.task_name]
                 self.task.begin()        
                 obj_1, obj_2, parent_comm = self.task.obs()
-                episode_dict["objects"].append(obj_1)
-                episode_dict["comms"].append(parent_comm)
+                episode_dict["objects_1"].append(multihots_to_string(obj_1))
+                episode_dict["objects_2"].append(None if obj_2 == None else multihots_to_string(obj_2))
+                episode_dict["comms_1"].append(onehots_to_string(parent_comm))
+                episode_dict["comms_2"].append(onehots_to_string(parent_comm)) 
                 for step in range(self.args.max_steps):
                     if(not done):
                         prev_action_1, hp_1, hq_1, ha_1, prev_action_2, hp_2, hq_2, ha_2, reward, done, win, to_push_1, to_push_2 = self.step_in_episode(prev_action_1, hq_1, ha_1, prev_action_2, hq_2, ha_2, push = False)
-                        episode_dict["actions"].append(prev_action_1.clone())
-                        episode_dict["rewards"].append(reward)
+                        episode_dict["actions_1"].append(prev_action_1)
+                        episode_dict["actions_2"].append(prev_action_2)
+                        episode_dict["rewards"].append(str(reward))
                         obj_1, obj_2, parent_comm = self.task.obs()
-                        episode_dict["objects"].append(obj_1.clone())
-                        episode_dict["comms"].append(parent_comm.clone()) 
-                        # I think I should only save the last layer? The forward model can totally predict correctly, but these ain't right.
-                        hps_1.append(hp_1.clone())
-                        hqs_1.append(hq_1.clone())
-                for hp, hq, action in zip(hps_1, hqs_1, episode_dict["actions"]):
-                    pred_objects_p, pred_comm_p = self.forward.predict(hp, action)
-                    pred_objects_q, pred_comm_q = self.forward.predict(hq, action)
-                    episode_dict["prior_predicted_objects"].append(pred_objects_p.squeeze(0).squeeze(0))
-                    episode_dict["prior_predicted_comms"].append(pred_comm_p.squeeze(0).squeeze(0))
-                    episode_dict["posterior_predicted_objects"].append(pred_objects_q.squeeze(0).squeeze(0))
-                    episode_dict["posterior_predicted_comms"].append(pred_comm_q.squeeze(0).squeeze(0))
+                        episode_dict["objects_1"].append(multihots_to_string(obj_1))
+                        episode_dict["objects_2"].append(None if obj_2 == None else multihots_to_string(obj_2))
+                        episode_dict["comms_1"].append(onehots_to_string(parent_comm))
+                        episode_dict["comms_2"].append(onehots_to_string(parent_comm)) 
+                        hps_1.append(hp_1[:,0].unsqueeze(0))
+                        hqs_1.append(hq_1[:,0].unsqueeze(0))
+                        hps_2.append(hp_2 if hp_2 == None else hp_2[:,0].unsqueeze(0))
+                        hqs_2.append(hq_2 if hq_2 == None else hq_2[:,0].unsqueeze(0))
+                hp_1 = torch.cat(hps_1, dim = 1)
+                hq_1 = torch.cat(hqs_1, dim = 1)
+                actions_1 = torch.cat(episode_dict["actions_1"], dim = 1)
+                pred_objects_p, pred_comm_p = self.forward.predict(hp_1, actions_1)
+                pred_objects_q, pred_comm_q = self.forward.predict(hq_1, actions_1)
+                for step in range(pred_objects_p.shape[1]):
+                    episode_dict["prior_predicted_objects_1"].append(multihots_to_string(pred_objects_p[0,step]))
+                    episode_dict["prior_predicted_comms_1"].append(onehots_to_string(pred_comm_p[0,step]))
+                    episode_dict["posterior_predicted_objects_1"].append(multihots_to_string(pred_objects_q[0,step]))
+                    episode_dict["posterior_predicted_comms_1"].append(onehots_to_string(pred_comm_q[0,step]))
+                #if(self.agent_num == 1):
+                #    for step in range(hp_1.shape[1]):
+                #        print("\nIn Saving Episode:")
+                #        print("Real: ", episode_dict["comms_1"][step])
+                #        print("Prior:", episode_dict["prior_predicted_comms_1"][step])
+                #        print("Postr:", episode_dict["posterior_predicted_comms_1"][step])
+                #        print("\n")
                 self.plot_dict["episode_dicts"]["{}_{}_{}".format(self.agent_num, self.epochs, episode_num)] = episode_dict
         
         
@@ -349,7 +386,7 @@ class Agent:
         #if(self.agent_num == 1):
         #    print("\n\nEpoch", self.epochs)
         #    print("Real:")
-        #    for step in comms[0,1:]:
+        #    for step in comms[0]:
         #        print("\t", onehots_to_string(step))
         #    print("Predicted:")
         #    for step in pred_comms[0]:
@@ -375,12 +412,17 @@ class Agent:
         object_loss = shape_loss.mean(-1).unsqueeze(-1) * masks
         object_loss += color_loss.mean(-1).unsqueeze(-1) * masks
         
+        real_comm_mask, _ = create_comm_mask(comms[:,1:])
+        pred_comm_mask, _ = create_comm_mask(pred_comms)
+        comm_mask = combined_mask = real_comm_mask.int() | pred_comm_mask.int()
+        
         real_comms = comms[:,1:].reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
         real_comms = torch.argmax(real_comms, dim = -1)
         pred_comms = pred_comms.reshape((episodes * steps * self.args.max_comm_len, self.args.comm_shape))
     
         comm_loss = F.cross_entropy(pred_comms, real_comms, reduction = "none")
         comm_loss = comm_loss.reshape((episodes, steps, self.args.max_comm_len))
+        comm_loss *= comm_mask
         comm_loss = comm_loss.mean(-1).unsqueeze(-1) * masks
         
         accuracy_for_prediction_error = object_loss + comm_loss # * self.args.comm_scaler
@@ -401,7 +443,7 @@ class Agent:
         
         # Get curiosity                  
         if(self.args.dkl_max != None):
-            complexity_for_hidden_state = [torch.tanh(c) for c in complexity_for_hidden_state] # Or sigmoid? Or just clamp?
+            complexity_for_hidden_state = [torch.sigmoid(c) for c in complexity_for_hidden_state] # Or tanh? sigmoid? Or just clamp?
         prediction_error_curiosity = accuracy_for_prediction_error * (self.args.prediction_error_eta if self.args.prediction_error_eta != None else self.prediction_error_eta)
         hidden_state_curiosities = [complexity_for_hidden_state[layer] * (self.args.hidden_state_eta[layer] if self.args.hidden_state_eta[layer] != None else self.hidden_state_eta[layer]) for layer in range(self.args.layers)]
         hidden_state_curiosity = sum(hidden_state_curiosities)
@@ -416,10 +458,10 @@ class Agent:
                 
         # Train critics
         with torch.no_grad():
-            new_actions, log_pis_next, _ = self.actor(objects, comms, actions, hqs.clone().detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            new_actions, log_pis_next, _ = self.actor(objects, comms, actions, hqs.detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             Q_target_nexts = []
             for i in range(self.args.critics):
-                Q_target_next, _ = self.critic_targets[i](objects, comms, new_actions, hqs.clone().detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+                Q_target_next, _ = self.critic_targets[i](objects, comms, new_actions, hqs.detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
                 Q_target_next[:,1:]
                 Q_target_nexts.append(Q_target_next)
             log_pis_next = log_pis_next[:,1:]
@@ -432,7 +474,7 @@ class Agent:
         critic_losses = []
         Qs = []
         for i in range(self.args.critics):
-            Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].clone().detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], actions[:,1:], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             critic_loss = 0.5*F.mse_loss(Q*masks, Q_targets*masks)
             critic_losses.append(critic_loss)
             Qs.append(Q[0,0].item())
@@ -448,7 +490,7 @@ class Agent:
         
         # Train alpha
         if self.args.alpha == None:
-            _, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            _, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             alpha_loss = -(self.log_alpha.to(self.args.device) * (log_pis + self.target_entropy))*masks
             alpha_loss = alpha_loss.mean() / masks.mean()
             self.alpha_opt.zero_grad()
@@ -465,7 +507,7 @@ class Agent:
         if self.epochs % self.args.d == 0:
             if self.args.alpha == None: alpha = self.alpha 
             else:                       alpha = self.args.alpha
-            new_actions, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].clone().detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+            new_actions, log_pis, _ = self.actor(objects[:,:-1], comms[:,:-1], actions[:,:-1], hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
             if self.args.action_prior == "normal":
                 loc = torch.zeros(self.args.action_shape, dtype=torch.float64).to(self.args.device)
                 n = self.args.action_shape
@@ -476,7 +518,7 @@ class Agent:
                 policy_prior_log_prrgbd = 0.0
             Qs = []
             for i in range(self.args.critics):
-                Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].clone().detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
+                Q, _ = self.critics[i](objects[:,:-1], comms[:,:-1], new_actions, hqs[:,:-1].detach(), torch.zeros((episodes, steps, self.args.hidden_size)))
                 Qs.append(Q)
             Qs_stacked = torch.stack(Qs, dim=0)
             Q, _ = torch.min(Qs_stacked, dim=0)

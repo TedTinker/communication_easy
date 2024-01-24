@@ -74,7 +74,7 @@ class Task:
         return(
             self.current_objects_tensor_1, 
             None if self.parent else self.current_objects_tensor_2, 
-            #pad_zeros(string_to_onehots("CORRECT."), self.args.max_comm_len) if self.solved else 
+            pad_zeros(string_to_onehots("CORRECT."), self.args.max_comm_len) if self.solved else 
             self.goal_comm)
     
     def reward_for_action(self, action, agent_1 = True):

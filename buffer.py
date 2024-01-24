@@ -93,6 +93,7 @@ class RecurrentReplayBuffer:
             self.num_episodes = min(self.num_episodes + 1, self.capacity)
 
     def sample(self, batch_size):
+        if(self.num_episodes == 0): return(False)
         if(self.num_episodes < batch_size):
             indices = np.random.choice(self.num_episodes, self.num_episodes, replace=False)
             batch = (

@@ -2,7 +2,8 @@
 
 # To do:
 # Fix forward-collapse.
-# It seems predictions are bad in saved episodes?
+# Add critic-guesses in saved episodes.
+# Plot win-rates for generalization-tests.
 # Add double-agent scenario. 
 
 import os
@@ -122,7 +123,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
 
     # Training
-parser.add_argument('--epochs',             type=literal,    default = [2000],
+parser.add_argument('--epochs',             type=literal,    default = [1000],
                     help='List of how many epochs to train in each task.')
 parser.add_argument('--batch_size',         type=int,        default = 128, 
                     help='How many episodes are sampled for each epoch.')       
@@ -180,7 +181,7 @@ parser.add_argument("--dkl_max",            type=float,      default = 1,
                     help='Maximum value for clamping Kullback-Liebler divergence for hidden_state curiosity.')        
 parser.add_argument("--prediction_error_eta", type=float,    default = 1,
                     help='Nonnegative value, how much to consider prediction_error curiosity.')    
-parser.add_argument("--hidden_state_eta",   type=literal,    default = [1],
+parser.add_argument("--hidden_state_eta",   type=literal,    default = [1, 1],
                     help='Nonnegative valued, how much to consider hidden_state curiosity in each layer.')       
 
     # Imitation
@@ -194,11 +195,11 @@ parser.add_argument('--keep_data',           type=int,        default = 1,
 parser.add_argument('--epochs_per_gen_test', type=int,        default = 10,
                     help='How many epochs should pass before trying generalization test.')
 
-parser.add_argument('--epochs_per_episode_dict',type=int,        default = 250,
+parser.add_argument('--epochs_per_episode_dict',type=int,        default = 200,
                     help='How many epochs should pass before saving an episode.')
-parser.add_argument('--agents_per_episode_dict',type=int,        default = 3,
+parser.add_argument('--agents_per_episode_dict',type=int,        default = 10,
                     help='How many agents to save episodes.')
-parser.add_argument('--episodes_in_episode_dict',type=int,       default = 1,
+parser.add_argument('--episodes_in_episode_dict',type=int,       default = 2,
                     help='How many episodes to save per agent.')
 
 parser.add_argument('--epochs_per_agent_list',type=int,       default = 100000,
@@ -447,11 +448,11 @@ def pad_zeros(value, length):
     padding_shape = list(value.shape)
     padding_shape[-2] = rows_to_add
     padding = torch.zeros(padding_shape)
+    padding
     padding[..., 0] = 1
     value = torch.cat([value, padding], dim=-2)
     return value
 
-# Not in use, but maybe should be. 
 def create_comm_mask(comm):
     period_index = char_to_index["."]  # Index for the period character in the one-hot encoding
     mask = torch.ones_like(comm[..., 0], dtype=torch.float32)  # Create a mask with the same shape except for the last dimension

@@ -8,7 +8,7 @@ from torchinfo import summary as torch_summary
 
 from utils import default_args, detach_list, attach_list, print, init_weights, episodes_steps, var, sample
 from mtrnn import MTRNN
-from submodules import Obs_IN, Action_IN
+from submodules import Obs_IN, Action_IN, Actor_Comm_OUT
 
 
 
@@ -42,6 +42,8 @@ class Actor(nn.Module):
                 time_constant = 1,
                 args = self.args)
         
+        self.comm = Actor_Comm_OUT(self.args)
+        
         self.mu = nn.Sequential(
             nn.Linear(
                 in_features = args.hidden_size, 
@@ -60,11 +62,13 @@ class Actor(nn.Module):
         x = self.lin(torch.cat([obs, prev_action, forward_hidden], dim = -1))
         x = self.mtrnn(x, action_hidden)
         action_hidden = action_hidden[:,-1].unsqueeze(1)
+        #comm, comm_log_prob = self.comm(x)
         mu, std = var(x, self.mu, self.std, self.args)
         x = sample(mu, std, self.args.device)
         action = torch.tanh(x)
         log_prob = Normal(mu, std).log_prob(x) - torch.log(1 - action.pow(2) + 1e-6)
         log_prob = torch.mean(log_prob, -1).unsqueeze(-1)
+        #log_prob += comm_log_prob
         return action, log_prob, action_hidden
     
     
