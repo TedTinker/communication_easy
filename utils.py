@@ -2,10 +2,9 @@
 
 # To do:
 # Fix forward-collapse.
-# Don't forget to add comms_out to actor and critic!
-# Add critic-guesses in saved episodes.
 # Plot win-rates for generalization-tests.
-# Add double-agent scenario. 
+# Try making actor's comm-out only work when actually in use,
+# and start it equal to the forward's comm-predictor. 
 
 import os
 import pickle
@@ -62,8 +61,8 @@ action_map = {
     0: "push", 
     1: "pull", 
     2: "lift", 
-    3: "spin-L", 
-    4: "spin-R"}
+    3: "spin L", 
+    4: "spin R"}
 
 comm_map = {
     0: ' ', 1: 'A', 2: 'B', 3: 'C', 4: 'D', 5: 'E', 6: 'F', 7: 'G',
@@ -96,7 +95,7 @@ parser.add_argument('--device',             type=str,        default = device,
                     help='Which device to use for Torch.')
 
     # Task details
-parser.add_argument('--task_list', type=literal,    default = ["1"],
+parser.add_argument('--task_list',          type=literal,    default = ["1"],
                     help='List of tasks. Agent trains on each task based on epochs in epochs parameter.')
 parser.add_argument('--max_steps',          type=int,        default = 3,
                     help='How many steps the agent can make in one episode.')
@@ -124,7 +123,7 @@ parser.add_argument('--max_comm_len',      type=int,        default = 20,
                     help='Maximum length of communication.')
 
     # Training
-parser.add_argument('--epochs',             type=literal,    default = [1000],
+parser.add_argument('--epochs',             type=literal,    default = [500],
                     help='List of how many epochs to train in each task.')
 parser.add_argument('--batch_size',         type=int,        default = 128, 
                     help='How many episodes are sampled for each epoch.')       
@@ -180,9 +179,9 @@ parser.add_argument("--curiosity",          type=str,        default = "none",
                     help='Which kind of curiosity: none, prediction_error, or hidden_state.')  
 parser.add_argument("--dkl_max",            type=float,      default = 1,
                     help='Maximum value for clamping Kullback-Liebler divergence for hidden_state curiosity.')        
-parser.add_argument("--prediction_error_eta", type=float,    default = 1,
+parser.add_argument("--prediction_error_eta", type=float,    default = 3,
                     help='Nonnegative value, how much to consider prediction_error curiosity.')    
-parser.add_argument("--hidden_state_eta",   type=literal,    default = [1, 1],
+parser.add_argument("--hidden_state_eta",   type=literal,    default = [3],
                     help='Nonnegative valued, how much to consider hidden_state curiosity in each layer.')       
 
     # Imitation
@@ -196,14 +195,14 @@ parser.add_argument('--keep_data',           type=int,        default = 1,
 parser.add_argument('--epochs_per_gen_test', type=int,        default = 10,
                     help='How many epochs should pass before trying generalization test.')
 
-parser.add_argument('--epochs_per_episode_dict',type=int,        default = 200,
+parser.add_argument('--epochs_per_episode_dict',type=int,        default = 250,
                     help='How many epochs should pass before saving an episode.')
 parser.add_argument('--agents_per_episode_dict',type=int,        default = 3,
                     help='How many agents to save episodes.')
 parser.add_argument('--episodes_in_episode_dict',type=int,       default = 1,
                     help='How many episodes to save per agent.')
 
-parser.add_argument('--epochs_per_agent_list',type=int,       default = 100000,
+parser.add_argument('--epochs_per_agent_list',type=int,       default = 999999999,
                     help='How many epochs should pass before saving agent model.')
 parser.add_argument('--agents_per_agent_list',type=int,       default = 1,
                     help='How many agents to save.') 
@@ -470,7 +469,7 @@ def create_comm_mask(comm):
 
     if len(comm.shape) == 2:  # Handling (sequence_length, len(comm_map))
         mask, last_index = apply_mask(mask, period_mask)
-        last_indices = torch.tensor(last_index).expand_as(mask)
+        last_indices = last_index.expand_as(mask)
     elif len(comm.shape) == 3:  # Handling (steps, sequence_length, len(comm_map))
         last_indices = torch.empty(comm.shape[0], dtype=torch.long)
         for step in range(comm.shape[0]):

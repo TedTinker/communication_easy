@@ -70,7 +70,7 @@ class Task:
         self.goal_comm = pad_zeros(self.goal_comm, self.args.max_comm_len)
         return(index)
         
-    def give_observation(self):
+    def give_observation(self, step):
         return(
             self.current_objects_tensor_1, 
             None if self.parent else self.current_objects_tensor_2, 
@@ -134,7 +134,7 @@ class Task_Runner:
         self.task.begin(test, verbose)
         
     def obs(self):
-        return(self.task.give_observation())
+        return(self.task.give_observation(self.steps))
         
     def action(self, action_1, action_2 = None, verbose = False):
         self.steps += 1
@@ -173,7 +173,6 @@ if __name__ == "__main__":
 
     task_runner = Task_Runner(Task(actions = 5, objects = 3, shapes = 5, colors = 6))
     task_runner.begin(verbose = True)
-    task_runner.task.give_observation()
     done = False
     while(done == False):
         action_num = randint(0, args.actions - 1)
@@ -186,7 +185,6 @@ if __name__ == "__main__":
         
     task_runner = Task_Runner(Task(actions = 5, objects = 3, shapes = 5, colors = 6, parent = False))
     task_runner.begin(verbose = True)
-    task_runner.task.give_observation()
     done = False
     while(done == False):
         action_1_num = randint(0, args.actions - 1)

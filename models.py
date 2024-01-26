@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.distributions import Normal
 from torchinfo import summary as torch_summary
 
-from utils import default_args, detach_list, attach_list, print, init_weights, episodes_steps, var, sample
+from utils import default_args, detach_list, attach_list, print, init_weights, episodes_steps, var, sample, create_comm_mask
 from mtrnn import MTRNN
 from submodules import Obs_IN, Action_IN, Actor_Comm_OUT, Comm_IN
 
@@ -56,25 +56,32 @@ class Actor(nn.Module):
         self.apply(init_weights)
         self.to(args.device)
 
-    def forward(self, objects, comm, prev_action, prev_comm_out, forward_hidden, action_hidden):
+    def forward(self, objects, comm_in, prev_action, prev_comm_out, forward_hidden, action_hidden):
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
-        obs = self.obs_in(objects, comm)
+        if(len(comm_in.shape) == 2):  comm_in = comm_in.unsqueeze(0)
+        if(len(comm_in.shape) == 3):  comm_in = comm_in.unsqueeze(1)
+        if(len(prev_comm_out.shape) == 2):  prev_comm_out = prev_comm_out.unsqueeze(0)
+        if(len(prev_comm_out.shape) == 3):  prev_comm_out = prev_comm_out.unsqueeze(1)
+        
+        mask, last_indexes = create_comm_mask(comm_in)
+        comm_in *= mask.unsqueeze(-1).tile((1,1,1,self.args.comm_shape))
+        mask, last_indexes = create_comm_mask(prev_comm_out)
+        prev_comm_out *= mask.unsqueeze(-1).tile((1,1,1,self.args.comm_shape))
+        
+        obs = self.obs_in(objects, comm_in)
         prev_action = self.action_in(prev_action)
         prev_comm_out = self.comm_in(prev_comm_out)
         x = self.lin(torch.cat([obs, prev_action, prev_comm_out, forward_hidden], dim = -1))
         x = self.mtrnn(x, action_hidden)
         action_hidden = action_hidden[:,-1].unsqueeze(1)
-        comm, comm_log_prob = self.comm(x)
-        indices = torch.argmax(comm, dim=3)
-        comm = torch.zeros_like(comm)
-        comm.scatter_(3, indices.unsqueeze(3), 1)
+        comm_out, comm_log_prob = self.comm(x)
         mu, std = var(x, self.mu, self.std, self.args)
         x = sample(mu, std, self.args.device)
         action = torch.tanh(x)
         log_prob = Normal(mu, std).log_prob(x) - torch.log(1 - action.pow(2) + 1e-6)
         log_prob = torch.mean(log_prob, -1).unsqueeze(-1)
         log_prob += comm_log_prob
-        return action, comm, log_prob, action_hidden
+        return action, comm_out, log_prob, action_hidden
     
     
     
@@ -128,10 +135,19 @@ class Critic(nn.Module):
                 in_features = self.args.hidden_size,
                 out_features = 1))
         
-    def forward(self, objects, comm, action, comm_out, forward_hidden, critic_hidden):
+    def forward(self, objects, comm_in, action, comm_out, forward_hidden, critic_hidden):
         if(len(action.shape) == 2): action = action.unsqueeze(1)
         if(len(forward_hidden.shape) == 2): forward_hidden = forward_hidden.unsqueeze(1)
-        obs = self.obs_in(objects, comm)
+        if(len(comm_in.shape) == 2):  comm_in = comm_in.unsqueeze(0)
+        if(len(comm_in.shape) == 3):  comm_in = comm_in.unsqueeze(1)
+        if(len(comm_out.shape) == 2):  comm_out = comm_out.unsqueeze(0)
+        if(len(comm_out.shape) == 3):  comm_out = comm_out.unsqueeze(1)
+        
+        mask, last_indexes = create_comm_mask(comm_in)
+        comm_in *= mask.unsqueeze(-1).tile((1,1,1,self.args.comm_shape))
+        # Can't mask comm_out, or else actor loses backprop!
+        
+        obs = self.obs_in(objects, comm_in)
         action = self.action_in(action)
         comm_out = self.comm_in(comm_out)
         x = self.lin(torch.cat([obs, action, comm_out, forward_hidden], dim=-1))

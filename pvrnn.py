@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torchinfo import summary as torch_summary
 
-from utils import default_args, init_weights, var, sample, attach_list, detach_list, episodes_steps, pad_zeros
+from utils import default_args, init_weights, var, sample, attach_list, detach_list, episodes_steps, pad_zeros, create_comm_mask
 from mtrnn import MTRNN
 from submodules import Obs_IN, Obs_OUT, Action_IN, Comm_IN
 
@@ -67,12 +67,17 @@ class PVRNN_LAYER(nn.Module):
     def forward(
         self, 
         prev_hidden_states, 
-        objects = None, comms = None, prev_actions = None, prev_comms_out = None, 
+        objects = None, comms_in = None, prev_actions = None, prev_comms_out = None, 
         hidden_states_below = None, 
         prev_hidden_states_above = None):
         
         if(self.bottom):
-            obs = self.obs_in(objects, comms)
+            mask, last_indexes = create_comm_mask(comms_in)
+            comms_in *= mask.unsqueeze(-1).tile((1,self.args.comm_shape))
+            mask, last_indexes = create_comm_mask(prev_comms_out)
+            prev_comms_out *= mask.unsqueeze(-1).tile((1,self.args.comm_shape))
+            
+            obs = self.obs_in(objects, comms_in)
             prev_actions = self.action_in(prev_actions)
             prev_comms_out = self.comm_in(prev_comms_out)
             zp_inputs = torch.cat([prev_hidden_states, prev_actions, prev_comms_out], dim = -1)
@@ -228,7 +233,7 @@ class PVRNN(nn.Module):
             (zp_mu.unsqueeze(1), zp_std.unsqueeze(1), new_hidden_states_p.unsqueeze(1)),
             (zq_mu.unsqueeze(1), zq_std.unsqueeze(1), new_hidden_states_q.unsqueeze(1)))
     
-    def forward(self, prev_hidden_states, objects, comms, prev_actions, prev_comms_out):
+    def forward(self, prev_hidden_states, objects, comms_in, prev_actions, prev_comms_out):
         zp_mu_list = []
         zp_std_list = []
         zq_mu_list = []
@@ -240,7 +245,7 @@ class PVRNN(nn.Module):
         
         for step in range(steps):
             (zp_mu, zp_std, new_hidden_states_p), (zq_mu, zq_std, new_hidden_states_q) = \
-                self.bottom_to_top_step(prev_hidden_states, objects[:,step], comms[:,step], prev_actions[:,step], prev_comms_out[:,step])
+                self.bottom_to_top_step(prev_hidden_states, objects[:,step], comms_in[:,step], prev_actions[:,step], prev_comms_out[:,step])
             
             for l, o in zip(
                 [zp_mu_list, zp_std_list, zq_mu_list, zq_std_list, new_hidden_states_list_p, new_hidden_states_list_q],

@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from torch.distributions import Normal
 from torchinfo import summary as torch_summary
 
-from utils import default_args, init_weights, attach_list, detach_list, \
-    episodes_steps, pad_zeros, Ted_Conv1d, extract_and_concatenate, create_comm_mask, var, sample
+from utils import print, default_args, init_weights, attach_list, detach_list, \
+    episodes_steps, pad_zeros, Ted_Conv1d, extract_and_concatenate, create_comm_mask, var, sample, onehots_to_string
 from mtrnn import MTRNN
 
 
@@ -378,14 +378,11 @@ class Actor_Comm_OUT(nn.Module):
         comm_h = comm_h.reshape(episodes, steps, self.args.max_comm_len, self.args.hidden_size)
         mu, std = var(comm_h, self.comm_out_mu, self.comm_out_std, self.args)
         comm = sample(mu, std, self.args.device)
-        action_comm = torch.tanh(comm)
-        log_prob = Normal(mu, std).log_prob(comm) - torch.log(1 - action_comm.pow(2) + 1e-6)
+        comm_out = torch.tanh(comm)
+        log_prob = Normal(mu, std).log_prob(comm) - torch.log(1 - comm_out.pow(2) + 1e-6)
         log_prob = torch.mean(log_prob, -1).unsqueeze(-1)
-        mask, last_indexes = create_comm_mask(comm)
-        comm *= mask.unsqueeze(-1).tile((1,1,1,self.args.comm_shape))
-        log_prob *= mask.unsqueeze(-1)
         log_prob = log_prob.mean(-2)
-        return(action_comm, log_prob)
+        return(comm_out, log_prob)
     
     
     

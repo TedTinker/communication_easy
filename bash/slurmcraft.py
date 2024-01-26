@@ -102,7 +102,7 @@ def all_like_this(this):
         
 if(__name__ == "__main__" and args.arg_list == []):
     for key, value in slurm_dict.items(): print(key, ":", value,"\n")
-    interesting = []
+    interesting = ["efi_{}".format(i) for i in [7, 28, 35]]
     for this in interesting:
         print("{} : {}".format(this,slurm_dict[this]))
 
